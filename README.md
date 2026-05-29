@@ -36,22 +36,30 @@ The CLI is only a debug/smoke surface. Full Codex-compatible auto-continuation r
 
 ## Pi bridge
 
-The package declares a Pi extension in `package.json`:
+The package declares a compiled Pi extension in `package.json`:
 
 ```json
 {
   "pi": {
-    "extensions": ["./src/adapters/pi/index.ts"]
+    "extensions": ["./dist/adapters/pi/index.js"]
   }
 }
 ```
 
-For local testing, install or load this directory as a Pi package:
+Build before installing or loading it:
+
+```bash
+cd /home/shawn/projects/active/agent-goal-runtime
+npm install
+npm run build
+```
+
+Then install or load this directory as a Pi package:
 
 ```bash
 pi install /home/shawn/projects/active/agent-goal-runtime
 # or one-off:
-pi -e /home/shawn/projects/active/agent-goal-runtime/src/adapters/pi/index.ts
+pi -e /home/shawn/projects/active/agent-goal-runtime/dist/adapters/pi/index.js
 ```
 
 The Pi bridge registers:
