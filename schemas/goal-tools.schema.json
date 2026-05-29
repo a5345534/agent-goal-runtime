@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-goal-runtime/goal-tools.schema.json",
+  "$defs": {
+    "get_goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "create_goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "token_budget": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "update_goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["complete", "blocked"] }
+      }
+    }
+  }
+}

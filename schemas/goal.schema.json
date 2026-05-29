@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-goal-runtime/goal.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionKey",
+    "goalId",
+    "objective",
+    "status",
+    "tokensUsed",
+    "timeUsedSeconds",
+    "createdAt",
+    "updatedAt",
+    "goalTurnsSinceAuditReset"
+  ],
+  "properties": {
+    "sessionKey": { "type": "string", "minLength": 1 },
+    "goalId": { "type": "string", "minLength": 1 },
+    "objective": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "status": { "enum": ["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"] },
+    "tokenBudget": { "type": "integer", "minimum": 1 },
+    "tokensUsed": { "type": "integer", "minimum": 0 },
+    "timeUsedSeconds": { "type": "integer", "minimum": 0 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "goalTurnsSinceAuditReset": { "type": "integer", "minimum": 0 }
+  }
+}
