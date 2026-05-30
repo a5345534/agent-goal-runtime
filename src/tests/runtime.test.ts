@@ -311,8 +311,29 @@ test("completion audit approval marks complete and records terminal event", asyn
   const result = await runtime.toolUpdateGoal("s1", "complete");
 
   assert.equal(result.goal?.status, "complete");
+  assert.match(result.message, /Audit: verified/);
   const ledger = await store.listLedgerEvents("s1", result.goal?.goalId);
   assert.equal(ledger.some((event) => event.type === "goal_completed"), true);
+});
+
+test("completion audit errors keep goal active and record an audit error", async () => {
+  const store = new MemoryGoalStore();
+  const runtime = new GoalRuntime({
+    store,
+    callbacks: {
+      auditCompletion: () => {
+        throw new Error("auditor unavailable");
+      },
+    },
+  });
+
+  await runtime.createOrReplaceGoal("s1", "finish with auditor failure handling");
+  const result = await runtime.toolUpdateGoal("s1", "complete");
+
+  assert.equal(result.goal?.status, "active");
+  assert.match(result.message, /audit failed/i);
+  const ledger = await store.listLedgerEvents("s1", result.goal?.goalId);
+  assert.equal(ledger.some((event) => event.type === "completion_audit_result" && event.details?.source === "completion-audit-error"), true);
 });
 
 test("sqlite store persists ledger events across reopen", async () => {
