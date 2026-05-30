@@ -208,8 +208,9 @@ export class GoalRuntime {
         const updated = await this.setGoalStatus(goal, "complete");
         await this.appendLedger("goal_completed", sessionKey, updated.goalId, { audit });
         await this.store.clearReservation(sessionKey);
-        this.markTurnStopped(sessionKey, "complete", updated.goalId, "Goal marked complete.");
-        return { goal: updated, message: "Goal marked complete." };
+        const completionMessage = audit?.summary ? `Goal marked complete. Audit: ${audit.summary}` : "Goal marked complete.";
+        this.markTurnStopped(sessionKey, "complete", updated.goalId, completionMessage);
+        return { goal: updated, message: completionMessage };
     }
     async turnStarted(context) {
         const now = context.now ?? this.config.now();
@@ -485,7 +486,18 @@ export class GoalRuntime {
         const completionEvidence = await this.callbacks.collectCompletionEvidence?.(goal);
         const policyContext = await this.callbacks.getCompletionPolicyContext?.(goal);
         const ledgerEvents = await this.store.listLedgerEvents(goal.sessionKey, goal.goalId);
-        const result = await this.callbacks.auditCompletion({ goal, ledgerEvents, completionEvidence, policyContext });
+        let result;
+        try {
+            result = await this.callbacks.auditCompletion({ goal, ledgerEvents, completionEvidence, policyContext });
+        }
+        catch (error) {
+            result = {
+                approved: false,
+                source: "completion-audit-error",
+                summary: "Completion audit failed before approval.",
+                report: error instanceof Error ? error.message : String(error),
+            };
+        }
         await this.appendLedger("completion_audit_result", goal.sessionKey, goal.goalId, {
             approved: result.approved,
             summary: result.summary,
