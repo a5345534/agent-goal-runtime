@@ -19,8 +19,20 @@ test("parses inline workspace and branch flags", () => {
     workspace: "./prepared",
     branch: "feat/a",
     ref: undefined,
+    legacySession: false,
     remainingArgs: "implement the migration",
   });
+});
+
+test("parses explicit legacy-session fallback and rejects mixed workspace binding", () => {
+  assert.deepEqual(parseGoalWorkspaceFlags("--legacy-session keep this local"), {
+    workspace: undefined,
+    branch: undefined,
+    ref: undefined,
+    legacySession: true,
+    remainingArgs: "keep this local",
+  });
+  assert.throws(() => parseGoalWorkspaceFlags("--legacy-session --workspace . keep this local"), /cannot be combined/);
 });
 
 test("resolves workspace profiles before paths and allows inline branch override", () => {

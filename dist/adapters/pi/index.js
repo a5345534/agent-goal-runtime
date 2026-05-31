@@ -63,6 +63,7 @@ export default function goalPiExtension(pi) {
                 "--workspace",
                 "--branch",
                 "--ref",
+                "--legacy-session",
                 "list",
                 "status",
                 "monitor",
@@ -285,6 +286,24 @@ async function handlePiGoalCommand(runtime, ctx, args) {
         return;
     }
     if (command.kind === "start") {
+        if (workspaceFlags.legacySession) {
+            const result = await runtime.executeParsedCommand(sessionKey, command, { confirmReplace: true });
+            if (result.goal) {
+                await runtime.saveGoalSessionMetadata({
+                    sessionKey,
+                    goalId: result.goal.goalId,
+                    workspaceStatus: "legacy",
+                    branchVerificationStatus: "notApplicable",
+                    legacySessionBound: true,
+                    sessionFile: ctx.sessionManager.getSessionFile(),
+                    sessionName: ctx.sessionManager.getSessionName?.(),
+                    createdAt: result.goal.createdAt,
+                    updatedAt: result.goal.updatedAt,
+                });
+                showGoalDetails(ctx, result.goal);
+            }
+            return;
+        }
         const profiles = await runtime.listWorkspaceProfiles();
         const binding = resolveWorkspaceBinding(workspaceFlags, profiles, ctx.cwd);
         const validation = validateExecutionWorkspace(binding);
