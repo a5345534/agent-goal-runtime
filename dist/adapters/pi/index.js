@@ -3,6 +3,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { GoalRuntime, SQLiteGoalStore, parseGoalCommand, renderActiveGoalReminderPrompt, } from "../../core/index.js";
 import { GoalListController } from "./goal-list-ui.js";
+import { GoalMonitorController } from "./monitor-ui.js";
 import { PI_GOAL_SESSION_ENTRY_TYPE, PiSessionGoalMirrorStore } from "./session-store.js";
 import { parseGoalWorkspaceFlags, parseWorkspaceProfileCommand, resolveWorkspaceBinding, tokenize, validateExecutionWorkspace, } from "./workspace.js";
 const EXTENSION_MESSAGE_TYPE = "agent-goal-runtime";
@@ -411,25 +412,57 @@ async function monitorTargetGoal(runtime, ctx, reference) {
     await monitorGoalSummary(runtime, ctx, goal);
 }
 async function monitorGoalSummary(runtime, ctx, goal) {
-    const action = await ctx.ui.select(`Goal ${goal.shortGoalId}`, [
-        `Status — ${goal.status}`,
-        "Pause",
-        "Resume",
-        "Clear",
-        goal.sessionFile ? "Open execution session" : "Open execution session unavailable",
-        "Close",
-    ]);
-    if (!action || action === "Close" || action.startsWith("Status"))
+    const action = await pickGoalMonitorAction(ctx, goal);
+    if (!action || action === "close")
         return;
-    if (action === "Pause")
+    if (action === "pause")
         await runTargetGoalLifecycleCommand(runtime, ctx, "pause", goal.goalId);
-    else if (action === "Resume")
+    else if (action === "resume")
         await runTargetGoalLifecycleCommand(runtime, ctx, "resume", goal.goalId);
-    else if (action === "Clear")
+    else if (action === "clear")
         await runTargetGoalLifecycleCommand(runtime, ctx, "clear", goal.goalId);
-    else if (action === "Open execution session" && goal.sessionFile) {
+    else if (action === "openSession" && goal.sessionFile)
         await ctx.switchSession(goal.sessionFile);
+}
+async function pickGoalMonitorAction(ctx, goal) {
+    if (!ctx.hasUI) {
+        const options = [
+            "Close",
+            ...(goal.status === "active" ? ["Pause"] : []),
+            ...(["paused", "blocked", "budgetLimited", "usageLimited"].includes(goal.status) ? ["Resume"] : []),
+            "Clear",
+            ...(goal.sessionFile ? ["Open execution session"] : []),
+        ];
+        const action = await ctx.ui.select(`Goal ${goal.shortGoalId}`, options);
+        if (action === "Pause")
+            return "pause";
+        if (action === "Resume")
+            return "resume";
+        if (action === "Clear")
+            return "clear";
+        if (action === "Open execution session")
+            return "openSession";
+        return undefined;
     }
+    return ctx.ui.custom((tui, theme, _keybindings, done) => {
+        const controller = new GoalMonitorController(goal);
+        return {
+            render: (width) => controller.render(width, theme),
+            invalidate: () => undefined,
+            handleInput: (data) => {
+                const selection = controller.handleInput(data);
+                if (selection?.kind === "close") {
+                    done(undefined);
+                    return;
+                }
+                if (selection?.kind === "action") {
+                    done(selection.action);
+                    return;
+                }
+                tui.requestRender();
+            },
+        };
+    });
 }
 async function runTargetGoalLifecycleCommand(runtime, ctx, action, reference) {
     const goal = await resolveGoalReferenceOrThrow(runtime, reference);
