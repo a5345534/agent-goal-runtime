@@ -4,11 +4,15 @@ import { Type } from "typebox";
 import { GoalRuntime, SQLiteGoalStore, parseGoalCommand, renderActiveGoalReminderPrompt, } from "../../core/index.js";
 const EXTENSION_MESSAGE_TYPE = "agent-goal-runtime";
 const HIDDEN_CONTEXT_KIND = "goal_continuation";
+const STALE_CONTINUATION_KIND = "stale_goal_continuation";
+const SUPERSEDED_CONTINUATION_KIND = "superseded_goal_continuation";
+const CONTINUATION_MARKER = "agent_goal_continuation";
 const POST_STOP_ALLOWED_TOOL_SET = new Set(["get_goal", "read", "grep", "find", "ls"]);
 const MEANINGFUL_PROGRESS_TOOL_SET = new Set(["write", "edit", "bash", "read", "grep", "find", "ls"]);
 export default function goalPiExtension(pi) {
     const store = new SQLiteGoalStore();
     let lastCtx;
+    let staleContinuationAbortPending;
     const startedAttempts = new Map();
     const runtime = new GoalRuntime({
         store,
@@ -155,6 +159,12 @@ export default function goalPiExtension(pi) {
     pi.on("before_agent_start", async (event, ctx) => {
         lastCtx = ctx;
         const goal = (await runtime.getGoal(resolveSessionKey(ctx))).goal;
+        const incomingContinuation = extractGoalContinuationMetadataFromText(event.prompt);
+        if (incomingContinuation && !isContinuationCurrent(incomingContinuation, goal)) {
+            staleContinuationAbortPending = incomingContinuation;
+            ctx.abort?.();
+            return { systemPrompt: `${event.systemPrompt}\n\n${staleContinuationPrompt(incomingContinuation, goal)}` };
+        }
         if (!goal || goal.status !== "active")
             return;
         return { systemPrompt: `${event.systemPrompt}\n\n${renderActiveGoalReminderPrompt(goal)}` };
@@ -162,14 +172,8 @@ export default function goalPiExtension(pi) {
     pi.on("context", async (event, ctx) => {
         lastCtx = ctx;
         const goal = (await runtime.getGoal(resolveSessionKey(ctx))).goal;
-        let filtered = false;
-        const messages = event.messages.filter((message) => {
-            if (!isStaleGoalContinuationMessage(message, goal))
-                return true;
-            filtered = true;
-            return false;
-        });
-        return filtered ? { messages } : undefined;
+        const rewritten = rewriteQueuedGoalContinuationMessages(event.messages, goal);
+        return rewritten.changed ? { messages: rewritten.messages } : undefined;
     });
     pi.on("turn_start", async (event, ctx) => {
         lastCtx = ctx;
@@ -211,6 +215,11 @@ export default function goalPiExtension(pi) {
         const sessionKey = resolveSessionKey(ctx);
         const tokenUsage = readTokenUsage(ctx);
         if (isFailedAssistantTurn(event.message)) {
+            if (staleContinuationAbortPending) {
+                staleContinuationAbortPending = undefined;
+                await runtime.turnFinished({ sessionKey, tokenUsage }, false);
+                return;
+            }
             const current = await runtime.getGoal(sessionKey);
             if (current.goal?.status === "active") {
                 await runtime.pauseGoal(sessionKey);
@@ -511,7 +520,7 @@ async function startHiddenGoalTurn(pi, ctx, request, startedAttempts) {
         const hostTurnId = `pi-hidden-${request.attemptId}`;
         pi.sendMessage({
             customType: EXTENSION_MESSAGE_TYPE,
-            content: request.renderedPrompt,
+            content: renderGoalContinuationMessage(request),
             display: false,
             details: {
                 kind: HIDDEN_CONTEXT_KIND,
@@ -532,13 +541,119 @@ async function startHiddenGoalTurn(pi, ctx, request, startedAttempts) {
 function isFailedAssistantTurn(message) {
     return message?.role === "assistant" && (message.stopReason === "aborted" || message.stopReason === "error");
 }
-function isStaleGoalContinuationMessage(message, goal) {
+function renderGoalContinuationMessage(request) {
+    return [
+        `<${CONTINUATION_MARKER} goal_id="${escapeAttribute(request.goalId)}" goal_updated_at="${escapeAttribute(request.goalUpdatedAt)}" attempt_id="${escapeAttribute(request.attemptId)}">`,
+        request.renderedPrompt,
+        `</${CONTINUATION_MARKER}>`,
+    ].join("\n");
+}
+export function extractGoalContinuationMetadataFromText(content) {
+    const text = typeof content === "string" ? content : undefined;
+    if (!text)
+        return undefined;
+    const match = new RegExp(`^<${CONTINUATION_MARKER}\\s+([^>]*)>`).exec(text.trimStart());
+    if (!match)
+        return undefined;
+    const attrs = match[1] ?? "";
+    const goalId = attributeValue(attrs, "goal_id");
+    if (!goalId)
+        return undefined;
+    return {
+        goalId,
+        goalUpdatedAt: attributeValue(attrs, "goal_updated_at"),
+        attemptId: attributeValue(attrs, "attempt_id"),
+    };
+}
+function continuationMetadataFromMessage(message) {
     if (message.role !== "custom" || message.customType !== EXTENSION_MESSAGE_TYPE)
-        return false;
+        return undefined;
     const details = message.details;
-    if (details?.kind !== HIDDEN_CONTEXT_KIND)
-        return false;
-    return !goal || goal.status !== "active" || details.goalId !== goal.goalId || details.goalUpdatedAt !== goal.updatedAt;
+    if (details?.kind === HIDDEN_CONTEXT_KIND && typeof details.goalId === "string") {
+        return {
+            goalId: details.goalId,
+            goalUpdatedAt: typeof details.goalUpdatedAt === "string" ? details.goalUpdatedAt : undefined,
+            attemptId: typeof details.attemptId === "string" ? details.attemptId : undefined,
+        };
+    }
+    return extractGoalContinuationMetadataFromText(message.content);
+}
+function isContinuationCurrent(metadata, goal) {
+    return Boolean(goal
+        && goal.status === "active"
+        && metadata.goalId === goal.goalId
+        && (metadata.goalUpdatedAt === undefined || metadata.goalUpdatedAt === goal.updatedAt));
+}
+export function rewriteQueuedGoalContinuationMessages(messages, goal) {
+    const currentIndices = [];
+    const metadataByIndex = new Map();
+    messages.forEach((message, index) => {
+        const metadata = continuationMetadataFromMessage(message);
+        if (!metadata)
+            return;
+        metadataByIndex.set(index, metadata);
+        if (isContinuationCurrent(metadata, goal))
+            currentIndices.push(index);
+    });
+    const latestCurrentIndex = currentIndices.at(-1);
+    let changed = false;
+    const rewritten = messages.map((message, index) => {
+        const metadata = metadataByIndex.get(index);
+        if (!metadata)
+            return message;
+        if (index === latestCurrentIndex)
+            return message;
+        changed = true;
+        if (isContinuationCurrent(metadata, goal))
+            return supersededContinuationMessage(message, metadata);
+        return staleContinuationMessageObject(message, metadata, goal);
+    });
+    return { messages: rewritten, changed };
+}
+function staleContinuationPrompt(metadata, goal) {
+    const currentState = goal ? `Current goal id: ${goal.goalId}; current status: ${goal.status}.` : "There is no current goal.";
+    return [
+        "A queued hidden goal continuation is stale and has been cancelled before running.",
+        `Queued goal id: ${metadata.goalId}.`,
+        currentState,
+        "Ignore this stale hidden bookkeeping message; do not perform work for the queued goal id above or mention this cancellation to the user.",
+    ].join("\n");
+}
+function staleContinuationMessageObject(message, metadata, goal) {
+    return {
+        ...message,
+        content: staleContinuationPrompt(metadata, goal),
+        display: false,
+        details: {
+            kind: STALE_CONTINUATION_KIND,
+            goalId: metadata.goalId,
+            currentGoalId: goal?.goalId ?? null,
+            currentStatus: goal?.status ?? null,
+        },
+    };
+}
+function supersededContinuationMessage(message, metadata) {
+    return {
+        ...message,
+        content: [
+            "Superseded hidden goal continuation bookkeeping.",
+            `Goal id: ${metadata.goalId}.`,
+            "A newer continuation for this active goal appears later in context.",
+            "Ignore this message; do not perform work for it or mention it to the user.",
+        ].join("\n"),
+        display: false,
+        details: { kind: SUPERSEDED_CONTINUATION_KIND, goalId: metadata.goalId },
+    };
+}
+function attributeValue(attrs, name) {
+    const match = new RegExp(`${name}="([^"]*)"`).exec(attrs);
+    return match ? unescapeAttribute(match[1] ?? "") : undefined;
+}
+function escapeAttribute(value) {
+    return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+function unescapeAttribute(value) {
+    return value.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
 function showGoalStatus(ctx, goal) {
     ctx.ui?.setStatus?.("goal", compactGoalStatus(goal));
