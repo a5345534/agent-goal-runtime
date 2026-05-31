@@ -78,6 +78,7 @@ The Pi bridge registers:
 - `/goal --workspace <path-or-profile> --branch <branch> <objective>`
 - `/goal --workspace <path-or-profile> --ref <ref> <objective>`
 - `/goal --tokens 100k --workspace <path-or-profile> --branch <branch> <objective>`
+- `/goal --legacy-session <objective>` for an explicit compatibility/session-local goal
 - `/goal workspace add <name> --path <path> [--branch <branch>|--ref <ref>]`
 - `/goal workspace list|show|remove`
 - `/goal list`
@@ -91,7 +92,7 @@ The Pi bridge registers:
 
 It deliberately does **not** register `goal_complete`, `pause_goal`, or `abort_goal`; completion remains `update_goal({"status":"complete"})`.
 
-`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New Pi goals require an explicit execution workspace binding. Git-backed workspaces also require an explicit branch/ref binding, either inline or supplied by a named workspace profile. The adapter validates the configured workspace with read-only filesystem/git inspection and refuses missing, inaccessible, non-git branch/ref, branch/ref-mismatched, or host-policy-disallowed bindings; it does not create/delete worktrees, create branches, or switch branches. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces.
+`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New Pi goals require an explicit execution workspace binding unless the user opts into the explicit `--legacy-session` compatibility path. Git-backed workspaces also require an explicit branch/ref binding, either inline or supplied by a named workspace profile. The adapter validates the configured workspace with read-only filesystem/git inspection and refuses missing, inaccessible, non-git branch/ref, branch/ref-mismatched, or host-policy-disallowed bindings; it does not create/delete worktrees, create branches, or switch branches. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces.
 
 Bare `/goal` shows the current session's objective, status, elapsed time, token usage/budget, goal-turn count, and currently useful subcommands. `/goal list` lists recent materialized goals from the portable registry, including legacy session-bound goals. Targeted commands resolve full or short goal ids and reject ambiguous prefixes. The Pi status line uses compact status strings such as `🎯 active 18k/100k`, `🎯 paused`, `🎯 blocked`, `🎯 budget 100k/100k`, or `🎯 complete`.
 

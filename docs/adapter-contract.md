@@ -76,7 +76,7 @@ Stores must persist goal ledger events through `appendLedgerEvent` and `listLedg
 
 The portable store contract includes goal summaries, metadata, and workspace profiles. Adapters may expose those through UI commands such as `/goal list` and targeted lifecycle operations, but model-visible tools remain `get_goal`, `create_goal`, and `update_goal` only.
 
-Pi goal-owned sessions require explicit workspace binding. For git-backed workspaces, a branch or ref must be provided inline or by a named profile. The adapter validates paths, allowed-root policy (`AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` when configured), and git state with read-only inspection and must not create worktrees, create branches, delete workspaces, or switch branches. Legacy session-bound goals remain visible in registry output with `legacy` workspace status.
+Pi goal-owned sessions require explicit workspace binding unless the user opts into the explicit `--legacy-session` compatibility path. For git-backed workspaces, a branch or ref must be provided inline or by a named profile. The adapter validates paths, allowed-root policy (`AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` when configured), and git state with read-only inspection and must not create worktrees, create branches, delete workspaces, or switch branches. Legacy session-bound goals remain visible in registry output with `legacy` workspace status.
 
 ## Pi adapter status
 
