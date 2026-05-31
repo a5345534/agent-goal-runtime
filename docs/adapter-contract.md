@@ -79,7 +79,8 @@ The included Pi adapter maps:
 - turn/tool lifecycle through Pi events
 - ordinary-turn active goal reminders through `before_agent_start`
 - hidden continuation through `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })`
-- stale hidden continuation filtering through the Pi `context` hook
+- stale hidden continuation rewriting through the Pi `context` hook, including non-runnable stale bookkeeping and superseding older duplicate active-goal continuations
+- stale hidden continuation abort suppression in `before_agent_start` / `turn_end` so cancelled old-goal continuations do not pause the current goal
 - aborted/error turn handling by pausing the active goal until `/goal resume`
 - blocked updates through transcript-aware evidence derived from recent failed tool results or explicit blocked/cannot-proceed assistant text
 - completion audit through a lightweight Pi transcript heuristic unless `AGENT_GOAL_COMPLETION_AUDIT=off` or `PI_GOAL_COMPLETION_AUDIT=off`
