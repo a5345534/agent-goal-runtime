@@ -3,6 +3,7 @@ import { type GoalRecord } from "../../core/index.js";
 export default function goalPiExtension(pi: ExtensionAPI): void;
 export declare function readPiAssistantTokenTotalFromEntries(entries: Array<Record<string, unknown>>): number;
 export declare function normalizePiAssistantUsage(usage: unknown): number;
+export declare function extractAssistantTextForRecovery(message: Record<string, unknown> | undefined): string | undefined;
 interface GoalContinuationMetadata {
     goalId: string;
     goalUpdatedAt?: string;

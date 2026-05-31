@@ -81,6 +81,7 @@ The included Pi adapter maps:
 - hidden continuation through `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })`
 - stale hidden continuation rewriting through the Pi `context` hook, including non-runnable stale bookkeeping and superseding older duplicate active-goal continuations
 - stale hidden continuation abort suppression in `before_agent_start` / `turn_end` so cancelled old-goal continuations do not pause the current goal
+- failed-turn recovery context that preserves bounded partial assistant output/tool traces as untrusted hidden transcript evidence for a later `/goal resume`
 - aborted/error turn handling by pausing the active goal until `/goal resume`
 - blocked updates through transcript-aware evidence derived from recent failed tool results or explicit blocked/cannot-proceed assistant text
 - completion audit through a lightweight Pi transcript heuristic unless `AGENT_GOAL_COMPLETION_AUDIT=off` or `PI_GOAL_COMPLETION_AUDIT=off`
