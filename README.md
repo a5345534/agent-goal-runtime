@@ -14,10 +14,16 @@ This project provides the common framework first:
 - model-visible `get_goal`, `create_goal`, and restricted `update_goal` behavior
 - optional completion audit gate behind `update_goal({"status":"complete"})`, without adding `goal_complete`
 - durable execution ledger for lifecycle, continuation, audit, completion, and blocked evidence
+- durable task DAG and subagent registry data models for future controller orchestration
 - prompt rendering that treats goal objectives as untrusted user-provided task data
 - Pi extension adapter with transcript-aware blocked audit, slash-command token budgets, active-goal reminders, heuristic completion audit, post-stop tool guarding, abort/error pausing, and stale-continuation guards
 
 Other agent harness bridges are intentionally out of scope for this first implementation and should be added through separate changes.
+
+The current orchestration-state slice records DAG nodes and subagent registry
+records through the portable store/runtime APIs. It does not yet schedule nodes,
+spawn harness-neutral subagents, allocate Git controller worktrees, or validate
+subagent self-reports; those are follow-up slices.
 
 ## Build and test
 

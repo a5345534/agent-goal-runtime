@@ -1,4 +1,4 @@
-import type { ContinuationReservation, GoalLedgerEvent, GoalRecord, GoalSessionMetadata, GoalStore, GoalSummary, WorkspaceProfile } from "../../core/index.js";
+import type { ContinuationReservation, GoalDagNode, GoalLedgerEvent, GoalRecord, GoalSessionMetadata, GoalStore, GoalSubagentRecord, GoalSummary, WorkspaceProfile } from "../../core/index.js";
 export declare const PI_GOAL_SESSION_ENTRY_TYPE = "agent-goal-runtime-state";
 export declare const PI_GOAL_SESSION_ENTRY_VERSION = 1;
 export type PiGoalSessionEntryData = {
@@ -36,6 +36,21 @@ export type PiGoalSessionEntryData = {
     sessionKey: string;
     goalId: string;
     metadata: GoalSessionMetadata;
+    at: string;
+} | {
+    version: 1;
+    kind: "goal_dag_node";
+    goalId: string;
+    nodeId: string;
+    node: GoalDagNode;
+    at: string;
+} | {
+    version: 1;
+    kind: "goal_subagent";
+    goalId: string;
+    nodeId: string;
+    subagentId: string;
+    subagent: GoalSubagentRecord;
     at: string;
 } | {
     version: 1;
@@ -77,6 +92,12 @@ export declare class PiSessionGoalMirrorStore implements GoalStore {
     saveGoalSessionMetadata(metadata: GoalSessionMetadata): Promise<void>;
     getGoalSessionMetadata(sessionKey: string): Promise<GoalSessionMetadata | undefined>;
     listGoalSummaries(): Promise<GoalSummary[]>;
+    saveGoalDagNode(node: GoalDagNode): Promise<void>;
+    getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined>;
+    listGoalDagNodes(goalId: string): Promise<GoalDagNode[]>;
+    saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void>;
+    getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined>;
+    listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]>;
     saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void>;
     getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;
     listWorkspaceProfiles(): Promise<WorkspaceProfile[]>;

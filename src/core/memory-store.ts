@@ -1,9 +1,11 @@
 import type {
   ContinuationReservation,
+  GoalDagNode,
   GoalLedgerEvent,
   GoalRecord,
   GoalSessionMetadata,
   GoalStore,
+  GoalSubagentRecord,
   GoalSummary,
   WorkspaceProfile,
 } from "./types.js";
@@ -14,6 +16,8 @@ export class MemoryGoalStore implements GoalStore {
   private ledger: GoalLedgerEvent[] = [];
   private metadata = new Map<string, GoalSessionMetadata>();
   private profiles = new Map<string, WorkspaceProfile>();
+  private dagNodes = new Map<string, GoalDagNode>();
+  private subagents = new Map<string, GoalSubagentRecord>();
 
   async getCurrentGoal(sessionKey: string): Promise<GoalRecord | undefined> {
     const goal = this.goals.get(sessionKey);
@@ -77,6 +81,38 @@ export class MemoryGoalStore implements GoalStore {
     return summaries.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
   }
 
+  async saveGoalDagNode(node: GoalDagNode): Promise<void> {
+    this.dagNodes.set(dagNodeKey(node.goalId, node.nodeId), cloneDagNode(node));
+  }
+
+  async getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined> {
+    const node = this.dagNodes.get(dagNodeKey(goalId, nodeId));
+    return node ? cloneDagNode(node) : undefined;
+  }
+
+  async listGoalDagNodes(goalId: string): Promise<GoalDagNode[]> {
+    return [...this.dagNodes.values()]
+      .filter((node) => node.goalId === goalId)
+      .map(cloneDagNode)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.nodeId.localeCompare(b.nodeId));
+  }
+
+  async saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void> {
+    this.subagents.set(subagentKey(subagent.goalId, subagent.subagentId), cloneSubagent(subagent));
+  }
+
+  async getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined> {
+    const subagent = this.subagents.get(subagentKey(goalId, subagentId));
+    return subagent ? cloneSubagent(subagent) : undefined;
+  }
+
+  async listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]> {
+    return [...this.subagents.values()]
+      .filter((subagent) => subagent.goalId === goalId && (nodeId === undefined || subagent.nodeId === nodeId))
+      .map(cloneSubagent)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.subagentId.localeCompare(b.subagentId));
+  }
+
   async saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void> {
     this.profiles.set(profile.name, { ...profile });
   }
@@ -95,10 +131,43 @@ export class MemoryGoalStore implements GoalStore {
   }
 }
 
+function dagNodeKey(goalId: string, nodeId: string): string {
+  return `${goalId}:${nodeId}`;
+}
+
+function subagentKey(goalId: string, subagentId: string): string {
+  return `${goalId}:${subagentId}`;
+}
+
 function cloneLedgerEvent(event: GoalLedgerEvent): GoalLedgerEvent {
   return {
     ...event,
     details: event.details ? { ...event.details } : undefined,
+  };
+}
+
+function cloneDagNode(node: GoalDagNode): GoalDagNode {
+  return {
+    ...node,
+    dependencyNodeIds: [...node.dependencyNodeIds],
+    expectedOutputs: [...node.expectedOutputs],
+    validators: [...node.validators],
+    conflictHints: node.conflictHints
+      ? {
+          files: node.conflictHints.files ? [...node.conflictHints.files] : undefined,
+          modules: node.conflictHints.modules ? [...node.conflictHints.modules] : undefined,
+          capabilities: node.conflictHints.capabilities ? [...node.conflictHints.capabilities] : undefined,
+        }
+      : undefined,
+    completionGates: [...node.completionGates],
+  };
+}
+
+function cloneSubagent(subagent: GoalSubagentRecord): GoalSubagentRecord {
+  return {
+    ...subagent,
+    prompts: [...subagent.prompts],
+    controllerValidationResults: subagent.controllerValidationResults ? [...subagent.controllerValidationResults] : undefined,
   };
 }
 

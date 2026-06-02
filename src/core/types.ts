@@ -231,6 +231,83 @@ export interface GoalSummary {
   legacySessionBound?: boolean;
 }
 
+export type GoalDagNodeStatus =
+  | "planned"
+  | "ready"
+  | "running"
+  | "selfReportedComplete"
+  | "controllerValidating"
+  | "needsFollowup"
+  | "complete"
+  | "blocked"
+  | "failed"
+  | "superseded";
+
+export interface GoalDagConflictHints {
+  files?: string[];
+  modules?: string[];
+  capabilities?: string[];
+}
+
+export interface GoalDagNode {
+  goalId: string;
+  nodeId: string;
+  slug: string;
+  objective: string;
+  scope?: string;
+  dependencyNodeIds: string[];
+  expectedOutputs: string[];
+  validators: string[];
+  workspaceStrategy?: string;
+  risk?: "low" | "medium" | "high";
+  conflictHints?: GoalDagConflictHints;
+  completionGates: string[];
+  status: GoalDagNodeStatus;
+  lastValidationSummary?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type GoalSubagentStatus =
+  | "planned"
+  | "workspaceCreated"
+  | "sessionStarted"
+  | "running"
+  | "idle"
+  | "selfReportedComplete"
+  | "controllerValidating"
+  | "needsFollowup"
+  | "complete"
+  | "blocked"
+  | "failed";
+
+export interface GoalSubagentRecord {
+  goalId: string;
+  nodeId: string;
+  subagentId: string;
+  harnessAdapterId: string;
+  sessionId?: string;
+  sessionFile?: string;
+  workspacePath?: string;
+  branch?: string;
+  ref?: string;
+  status: GoalSubagentStatus;
+  prompts: string[];
+  lastActivityAt?: string;
+  selfReportedResult?: string;
+  controllerValidationResults?: string[];
+  commitSha?: string;
+  integrationStatus?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GoalOrchestrationState {
+  goalId: string;
+  nodes: GoalDagNode[];
+  subagents: GoalSubagentRecord[];
+}
+
 export type GoalReferenceResolution =
   | { kind: "found"; goal: GoalSummary }
   | { kind: "notFound"; reference: string }
@@ -259,6 +336,12 @@ export interface GoalStore {
   saveGoalSessionMetadata(metadata: GoalSessionMetadata): Promise<void>;
   getGoalSessionMetadata(sessionKey: string): Promise<GoalSessionMetadata | undefined>;
   listGoalSummaries(): Promise<GoalSummary[]>;
+  saveGoalDagNode(node: GoalDagNode): Promise<void>;
+  getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined>;
+  listGoalDagNodes(goalId: string): Promise<GoalDagNode[]>;
+  saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void>;
+  getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined>;
+  listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]>;
   saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void>;
   getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;
   listWorkspaceProfiles(): Promise<WorkspaceProfile[]>;

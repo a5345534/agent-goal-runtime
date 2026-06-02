@@ -1,5 +1,5 @@
 import { type GoalCommand } from "./parser.js";
-import type { BlockedAuditEvidence, GoalAdapterCallbacks, GoalLedgerEvent, GoalReferenceResolution, GoalRuntimeConfig, GoalSessionMetadata, GoalStatusInput, GoalStore, GoalSummary, GoalToolResult, WorkspaceProfile, GoalTurnStop, HiddenGoalTurnResult, TurnContext } from "./types.js";
+import type { BlockedAuditEvidence, GoalAdapterCallbacks, GoalDagNode, GoalLedgerEvent, GoalOrchestrationState, GoalReferenceResolution, GoalRuntimeConfig, GoalSessionMetadata, GoalStatusInput, GoalStore, GoalSubagentRecord, GoalSummary, GoalToolResult, WorkspaceProfile, GoalTurnStop, HiddenGoalTurnResult, TurnContext } from "./types.js";
 export declare class GoalRuntime {
     private readonly store;
     private readonly callbacks;
@@ -22,6 +22,13 @@ export declare class GoalRuntime {
     listLedgerEvents(sessionKey: string, goalId?: string): Promise<GoalLedgerEvent[]>;
     saveGoalSessionMetadata(metadata: GoalSessionMetadata): Promise<void>;
     listGoalSummaries(): Promise<GoalSummary[]>;
+    saveGoalDagNode(node: GoalDagNode): Promise<void>;
+    getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined>;
+    listGoalDagNodes(goalId: string): Promise<GoalDagNode[]>;
+    saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void>;
+    getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined>;
+    listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]>;
+    getGoalOrchestrationState(goalId: string): Promise<GoalOrchestrationState>;
     resolveGoalReference(reference: string): Promise<GoalReferenceResolution>;
     saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void>;
     getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;

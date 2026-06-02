@@ -1,9 +1,11 @@
 import type {
   ContinuationReservation,
+  GoalDagNode,
   GoalLedgerEvent,
   GoalRecord,
   GoalSessionMetadata,
   GoalStore,
+  GoalSubagentRecord,
   GoalSummary,
   WorkspaceProfile,
 } from "../../core/index.js";
@@ -18,6 +20,8 @@ export type PiGoalSessionEntryData =
   | { version: 1; kind: "reservation_cleared"; sessionKey: string; at: string }
   | { version: 1; kind: "ledger_event"; sessionKey: string; goalId?: string; event: GoalLedgerEvent; at: string }
   | { version: 1; kind: "goal_session_metadata"; sessionKey: string; goalId: string; metadata: GoalSessionMetadata; at: string }
+  | { version: 1; kind: "goal_dag_node"; goalId: string; nodeId: string; node: GoalDagNode; at: string }
+  | { version: 1; kind: "goal_subagent"; goalId: string; nodeId: string; subagentId: string; subagent: GoalSubagentRecord; at: string }
   | { version: 1; kind: "workspace_profile"; profile: WorkspaceProfile; at: string }
   | { version: 1; kind: "workspace_profile_removed"; name: string; at: string };
 
@@ -120,6 +124,40 @@ export class PiSessionGoalMirrorStore implements GoalStore {
     return this.primary.listGoalSummaries();
   }
 
+  async saveGoalDagNode(node: GoalDagNode): Promise<void> {
+    await this.primary.saveGoalDagNode(node);
+    this.mirror({ version: 1, kind: "goal_dag_node", goalId: node.goalId, nodeId: node.nodeId, node, at: this.nowIso() });
+  }
+
+  getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined> {
+    return this.primary.getGoalDagNode(goalId, nodeId);
+  }
+
+  listGoalDagNodes(goalId: string): Promise<GoalDagNode[]> {
+    return this.primary.listGoalDagNodes(goalId);
+  }
+
+  async saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void> {
+    await this.primary.saveGoalSubagent(subagent);
+    this.mirror({
+      version: 1,
+      kind: "goal_subagent",
+      goalId: subagent.goalId,
+      nodeId: subagent.nodeId,
+      subagentId: subagent.subagentId,
+      subagent,
+      at: this.nowIso(),
+    });
+  }
+
+  getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined> {
+    return this.primary.getGoalSubagent(goalId, subagentId);
+  }
+
+  listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]> {
+    return this.primary.listGoalSubagents(goalId, nodeId);
+  }
+
   async saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void> {
     await this.primary.saveWorkspaceProfile(profile);
     this.mirror({ version: 1, kind: "workspace_profile", profile, at: this.nowIso() });
@@ -184,6 +222,10 @@ function isPiGoalSessionEntryData(value: unknown): value is PiGoalSessionEntryDa
       return typeof record.sessionKey === "string" && isRecord(record.event);
     case "goal_session_metadata":
       return typeof record.sessionKey === "string" && typeof record.goalId === "string" && isRecord(record.metadata);
+    case "goal_dag_node":
+      return typeof record.goalId === "string" && typeof record.nodeId === "string" && isRecord(record.node);
+    case "goal_subagent":
+      return typeof record.goalId === "string" && typeof record.nodeId === "string" && typeof record.subagentId === "string" && isRecord(record.subagent);
     case "workspace_profile":
       return isRecord(record.profile) && typeof record.at === "string";
     case "workspace_profile_removed":

@@ -61,6 +61,31 @@ export class GoalRuntime {
     async listGoalSummaries() {
         return this.store.listGoalSummaries();
     }
+    async saveGoalDagNode(node) {
+        await this.store.saveGoalDagNode(node);
+    }
+    async getGoalDagNode(goalId, nodeId) {
+        return this.store.getGoalDagNode(goalId, nodeId);
+    }
+    async listGoalDagNodes(goalId) {
+        return this.store.listGoalDagNodes(goalId);
+    }
+    async saveGoalSubagent(subagent) {
+        await this.store.saveGoalSubagent(subagent);
+    }
+    async getGoalSubagent(goalId, subagentId) {
+        return this.store.getGoalSubagent(goalId, subagentId);
+    }
+    async listGoalSubagents(goalId, nodeId) {
+        return this.store.listGoalSubagents(goalId, nodeId);
+    }
+    async getGoalOrchestrationState(goalId) {
+        const [nodes, subagents] = await Promise.all([
+            this.store.listGoalDagNodes(goalId),
+            this.store.listGoalSubagents(goalId),
+        ]);
+        return { goalId, nodes, subagents };
+    }
     async resolveGoalReference(reference) {
         const trimmed = reference.trim();
         const summaries = await this.store.listGoalSummaries();

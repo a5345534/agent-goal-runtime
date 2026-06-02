@@ -7,14 +7,17 @@ import type {
   CompletionAuditResult,
   ContinuationReservation,
   GoalAdapterCallbacks,
+  GoalDagNode,
   GoalLedgerEvent,
   GoalLedgerEventType,
+  GoalOrchestrationState,
   GoalRecord,
   GoalReferenceResolution,
   GoalRuntimeConfig,
   GoalSessionMetadata,
   GoalStatusInput,
   GoalStore,
+  GoalSubagentRecord,
   GoalSummary,
   GoalToolResult,
   WorkspaceProfile,
@@ -99,6 +102,38 @@ export class GoalRuntime {
 
   async listGoalSummaries(): Promise<GoalSummary[]> {
     return this.store.listGoalSummaries();
+  }
+
+  async saveGoalDagNode(node: GoalDagNode): Promise<void> {
+    await this.store.saveGoalDagNode(node);
+  }
+
+  async getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined> {
+    return this.store.getGoalDagNode(goalId, nodeId);
+  }
+
+  async listGoalDagNodes(goalId: string): Promise<GoalDagNode[]> {
+    return this.store.listGoalDagNodes(goalId);
+  }
+
+  async saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void> {
+    await this.store.saveGoalSubagent(subagent);
+  }
+
+  async getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined> {
+    return this.store.getGoalSubagent(goalId, subagentId);
+  }
+
+  async listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]> {
+    return this.store.listGoalSubagents(goalId, nodeId);
+  }
+
+  async getGoalOrchestrationState(goalId: string): Promise<GoalOrchestrationState> {
+    const [nodes, subagents] = await Promise.all([
+      this.store.listGoalDagNodes(goalId),
+      this.store.listGoalSubagents(goalId),
+    ]);
+    return { goalId, nodes, subagents };
   }
 
   async resolveGoalReference(reference: string): Promise<GoalReferenceResolution> {

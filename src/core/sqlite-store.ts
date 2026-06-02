@@ -5,10 +5,12 @@ import { resolveDefaultStateRoot } from "./state-root.js";
 import type {
   BranchVerificationStatus,
   ContinuationReservation,
+  GoalDagNode,
   GoalLedgerEvent,
   GoalRecord,
   GoalSessionMetadata,
   GoalStore,
+  GoalSubagentRecord,
   GoalSummary,
   WorkspaceProfile,
   WorkspaceProfileKind,
@@ -86,6 +88,46 @@ interface SqliteWorkspaceProfileRow {
   kind: WorkspaceProfileKind;
   branch: string | null;
   ref: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SqliteDagNodeRow {
+  goal_id: string;
+  node_id: string;
+  slug: string;
+  objective: string;
+  scope: string | null;
+  dependency_node_ids_json: string;
+  expected_outputs_json: string;
+  validators_json: string;
+  workspace_strategy: string | null;
+  risk: GoalDagNode["risk"] | null;
+  conflict_hints_json: string | null;
+  completion_gates_json: string;
+  status: GoalDagNode["status"];
+  last_validation_summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SqliteSubagentRow {
+  goal_id: string;
+  node_id: string;
+  subagent_id: string;
+  harness_adapter_id: string;
+  session_id: string | null;
+  session_file: string | null;
+  workspace_path: string | null;
+  branch: string | null;
+  ref: string | null;
+  status: GoalSubagentRecord["status"];
+  prompts_json: string;
+  last_activity_at: string | null;
+  self_reported_result: string | null;
+  controller_validation_results_json: string | null;
+  commit_sha: string | null;
+  integration_status: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -287,6 +329,130 @@ export class SQLiteGoalStore implements GoalStore {
     return rows.map(rowToGoalSummary);
   }
 
+  async saveGoalDagNode(node: GoalDagNode): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO goal_dag_nodes (
+          goal_id, node_id, slug, objective, scope, dependency_node_ids_json,
+          expected_outputs_json, validators_json, workspace_strategy, risk,
+          conflict_hints_json, completion_gates_json, status, last_validation_summary,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(goal_id, node_id) DO UPDATE SET
+          slug = excluded.slug,
+          objective = excluded.objective,
+          scope = excluded.scope,
+          dependency_node_ids_json = excluded.dependency_node_ids_json,
+          expected_outputs_json = excluded.expected_outputs_json,
+          validators_json = excluded.validators_json,
+          workspace_strategy = excluded.workspace_strategy,
+          risk = excluded.risk,
+          conflict_hints_json = excluded.conflict_hints_json,
+          completion_gates_json = excluded.completion_gates_json,
+          status = excluded.status,
+          last_validation_summary = excluded.last_validation_summary,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        node.goalId,
+        node.nodeId,
+        node.slug,
+        node.objective,
+        node.scope ?? null,
+        JSON.stringify(node.dependencyNodeIds),
+        JSON.stringify(node.expectedOutputs),
+        JSON.stringify(node.validators),
+        node.workspaceStrategy ?? null,
+        node.risk ?? null,
+        node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints),
+        JSON.stringify(node.completionGates),
+        node.status,
+        node.lastValidationSummary ?? null,
+        node.createdAt,
+        node.updatedAt,
+      );
+  }
+
+  async getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined> {
+    const row = this.db
+      .prepare("SELECT * FROM goal_dag_nodes WHERE goal_id = ? AND node_id = ?")
+      .get(goalId, nodeId) as SqliteDagNodeRow | undefined;
+    return row ? rowToDagNode(row) : undefined;
+  }
+
+  async listGoalDagNodes(goalId: string): Promise<GoalDagNode[]> {
+    const rows = this.db
+      .prepare("SELECT * FROM goal_dag_nodes WHERE goal_id = ? ORDER BY created_at ASC, node_id ASC")
+      .all(goalId) as unknown as SqliteDagNodeRow[];
+    return rows.map(rowToDagNode);
+  }
+
+  async saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO goal_subagents (
+          goal_id, node_id, subagent_id, harness_adapter_id, session_id,
+          session_file, workspace_path, branch, ref, status, prompts_json,
+          last_activity_at, self_reported_result, controller_validation_results_json,
+          commit_sha, integration_status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(goal_id, subagent_id) DO UPDATE SET
+          node_id = excluded.node_id,
+          harness_adapter_id = excluded.harness_adapter_id,
+          session_id = excluded.session_id,
+          session_file = excluded.session_file,
+          workspace_path = excluded.workspace_path,
+          branch = excluded.branch,
+          ref = excluded.ref,
+          status = excluded.status,
+          prompts_json = excluded.prompts_json,
+          last_activity_at = excluded.last_activity_at,
+          self_reported_result = excluded.self_reported_result,
+          controller_validation_results_json = excluded.controller_validation_results_json,
+          commit_sha = excluded.commit_sha,
+          integration_status = excluded.integration_status,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        subagent.goalId,
+        subagent.nodeId,
+        subagent.subagentId,
+        subagent.harnessAdapterId,
+        subagent.sessionId ?? null,
+        subagent.sessionFile ?? null,
+        subagent.workspacePath ?? null,
+        subagent.branch ?? null,
+        subagent.ref ?? null,
+        subagent.status,
+        JSON.stringify(subagent.prompts),
+        subagent.lastActivityAt ?? null,
+        subagent.selfReportedResult ?? null,
+        subagent.controllerValidationResults === undefined ? null : JSON.stringify(subagent.controllerValidationResults),
+        subagent.commitSha ?? null,
+        subagent.integrationStatus ?? null,
+        subagent.createdAt,
+        subagent.updatedAt,
+      );
+  }
+
+  async getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined> {
+    const row = this.db
+      .prepare("SELECT * FROM goal_subagents WHERE goal_id = ? AND subagent_id = ?")
+      .get(goalId, subagentId) as SqliteSubagentRow | undefined;
+    return row ? rowToSubagent(row) : undefined;
+  }
+
+  async listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]> {
+    const rows = nodeId === undefined
+      ? this.db
+          .prepare("SELECT * FROM goal_subagents WHERE goal_id = ? ORDER BY created_at ASC, subagent_id ASC")
+          .all(goalId) as unknown as SqliteSubagentRow[]
+      : this.db
+          .prepare("SELECT * FROM goal_subagents WHERE goal_id = ? AND node_id = ? ORDER BY created_at ASC, subagent_id ASC")
+          .all(goalId, nodeId) as unknown as SqliteSubagentRow[];
+    return rows.map(rowToSubagent);
+  }
+
   async saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void> {
     this.db
       .prepare(
@@ -383,6 +549,49 @@ export class SQLiteGoalStore implements GoalStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS goal_dag_nodes (
+        goal_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        objective TEXT NOT NULL,
+        scope TEXT,
+        dependency_node_ids_json TEXT NOT NULL,
+        expected_outputs_json TEXT NOT NULL,
+        validators_json TEXT NOT NULL,
+        workspace_strategy TEXT,
+        risk TEXT,
+        conflict_hints_json TEXT,
+        completion_gates_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        last_validation_summary TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (goal_id, node_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_goal_dag_nodes_goal_status ON goal_dag_nodes(goal_id, status, created_at);
+      CREATE TABLE IF NOT EXISTS goal_subagents (
+        goal_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        subagent_id TEXT NOT NULL,
+        harness_adapter_id TEXT NOT NULL,
+        session_id TEXT,
+        session_file TEXT,
+        workspace_path TEXT,
+        branch TEXT,
+        ref TEXT,
+        status TEXT NOT NULL,
+        prompts_json TEXT NOT NULL,
+        last_activity_at TEXT,
+        self_reported_result TEXT,
+        controller_validation_results_json TEXT,
+        commit_sha TEXT,
+        integration_status TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (goal_id, subagent_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_goal_subagents_goal_node ON goal_subagents(goal_id, node_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_goal_subagents_goal_status ON goal_subagents(goal_id, status, updated_at);
     `);
   }
 }
@@ -485,11 +694,80 @@ function rowToWorkspaceProfile(row: SqliteWorkspaceProfileRow): WorkspaceProfile
   };
 }
 
+function rowToDagNode(row: SqliteDagNodeRow): GoalDagNode {
+  return {
+    goalId: row.goal_id,
+    nodeId: row.node_id,
+    slug: row.slug,
+    objective: row.objective,
+    scope: row.scope ?? undefined,
+    dependencyNodeIds: parseStringArray(row.dependency_node_ids_json),
+    expectedOutputs: parseStringArray(row.expected_outputs_json),
+    validators: parseStringArray(row.validators_json),
+    workspaceStrategy: row.workspace_strategy ?? undefined,
+    risk: row.risk ?? undefined,
+    conflictHints: parseConflictHints(row.conflict_hints_json),
+    completionGates: parseStringArray(row.completion_gates_json),
+    status: row.status,
+    lastValidationSummary: row.last_validation_summary ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToSubagent(row: SqliteSubagentRow): GoalSubagentRecord {
+  return {
+    goalId: row.goal_id,
+    nodeId: row.node_id,
+    subagentId: row.subagent_id,
+    harnessAdapterId: row.harness_adapter_id,
+    sessionId: row.session_id ?? undefined,
+    sessionFile: row.session_file ?? undefined,
+    workspacePath: row.workspace_path ?? undefined,
+    branch: row.branch ?? undefined,
+    ref: row.ref ?? undefined,
+    status: row.status,
+    prompts: parseStringArray(row.prompts_json),
+    lastActivityAt: row.last_activity_at ?? undefined,
+    selfReportedResult: row.self_reported_result ?? undefined,
+    controllerValidationResults: row.controller_validation_results_json ? parseStringArray(row.controller_validation_results_json) : undefined,
+    commitSha: row.commit_sha ?? undefined,
+    integrationStatus: row.integration_status ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function parseDetails(json: string | null): Record<string, unknown> | undefined {
   if (!json) return undefined;
   try {
     const parsed = JSON.parse(json) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseStringArray(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseConflictHints(json: string | null): GoalDagNode["conflictHints"] | undefined {
+  if (!json) return undefined;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    return {
+      files: Array.isArray(record.files) ? record.files.filter((value): value is string => typeof value === "string") : undefined,
+      modules: Array.isArray(record.modules) ? record.modules.filter((value): value is string => typeof value === "string") : undefined,
+      capabilities: Array.isArray(record.capabilities) ? record.capabilities.filter((value): value is string => typeof value === "string") : undefined,
+    };
   } catch {
     return undefined;
   }

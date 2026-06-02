@@ -80,6 +80,34 @@ export class PiSessionGoalMirrorStore {
     listGoalSummaries() {
         return this.primary.listGoalSummaries();
     }
+    async saveGoalDagNode(node) {
+        await this.primary.saveGoalDagNode(node);
+        this.mirror({ version: 1, kind: "goal_dag_node", goalId: node.goalId, nodeId: node.nodeId, node, at: this.nowIso() });
+    }
+    getGoalDagNode(goalId, nodeId) {
+        return this.primary.getGoalDagNode(goalId, nodeId);
+    }
+    listGoalDagNodes(goalId) {
+        return this.primary.listGoalDagNodes(goalId);
+    }
+    async saveGoalSubagent(subagent) {
+        await this.primary.saveGoalSubagent(subagent);
+        this.mirror({
+            version: 1,
+            kind: "goal_subagent",
+            goalId: subagent.goalId,
+            nodeId: subagent.nodeId,
+            subagentId: subagent.subagentId,
+            subagent,
+            at: this.nowIso(),
+        });
+    }
+    getGoalSubagent(goalId, subagentId) {
+        return this.primary.getGoalSubagent(goalId, subagentId);
+    }
+    listGoalSubagents(goalId, nodeId) {
+        return this.primary.listGoalSubagents(goalId, nodeId);
+    }
     async saveWorkspaceProfile(profile) {
         await this.primary.saveWorkspaceProfile(profile);
         this.mirror({ version: 1, kind: "workspace_profile", profile, at: this.nowIso() });
@@ -144,6 +172,10 @@ function isPiGoalSessionEntryData(value) {
             return typeof record.sessionKey === "string" && isRecord(record.event);
         case "goal_session_metadata":
             return typeof record.sessionKey === "string" && typeof record.goalId === "string" && isRecord(record.metadata);
+        case "goal_dag_node":
+            return typeof record.goalId === "string" && typeof record.nodeId === "string" && isRecord(record.node);
+        case "goal_subagent":
+            return typeof record.goalId === "string" && typeof record.nodeId === "string" && typeof record.subagentId === "string" && isRecord(record.subagent);
         case "workspace_profile":
             return isRecord(record.profile) && typeof record.at === "string";
         case "workspace_profile_removed":
