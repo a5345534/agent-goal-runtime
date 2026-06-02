@@ -3,6 +3,7 @@ import { createGoalDagNodes, getGoalDagReadyQueue as computeGoalDagReadyQueue, }
 import { parseGoalCommand, validateGoalObjective } from "./parser.js";
 import { renderBudgetLimitPrompt, renderContinuationPrompt, renderObjectiveUpdatedPrompt } from "./prompts.js";
 import { isAutoContinuableStatus, normalizeGoalStatus } from "./status.js";
+import { sendGoalSubagentPrompt as sendGoalSubagentPromptThroughAdapter, startGoalSubagent as startGoalSubagentThroughAdapter, syncGoalSubagentState, } from "./subagent-adapter.js";
 export class GoalRuntime {
     store;
     callbacks;
@@ -95,6 +96,22 @@ export class GoalRuntime {
     }
     async getGoalDagReadyQueue(goalId, policy = {}) {
         return computeGoalDagReadyQueue(await this.getGoalOrchestrationState(goalId), policy);
+    }
+    async startGoalSubagent(adapter, node, options) {
+        const { record } = await startGoalSubagentThroughAdapter(adapter, node, options);
+        await this.store.saveGoalSubagent(record);
+        await this.store.saveGoalDagNode({ ...node, status: "running", updatedAt: record.updatedAt });
+        return record;
+    }
+    async sendGoalSubagentPrompt(adapter, subagent, prompt, options = {}) {
+        const updated = await sendGoalSubagentPromptThroughAdapter(adapter, subagent, prompt, options);
+        await this.store.saveGoalSubagent(updated);
+        return updated;
+    }
+    async syncGoalSubagent(adapter, subagent) {
+        const updated = await syncGoalSubagentState(adapter, subagent, { now: this.config.now() });
+        await this.store.saveGoalSubagent(updated);
+        return updated;
     }
     async resolveGoalReference(reference) {
         const trimmed = reference.trim();

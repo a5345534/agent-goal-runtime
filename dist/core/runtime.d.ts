@@ -1,5 +1,6 @@
 import { type GoalDagPlanNodeInput, type GoalDagPlanOptions, type GoalDagReadyQueue, type GoalDagSchedulingPolicy } from "./dag-scheduler.js";
 import { type GoalCommand } from "./parser.js";
+import { type HarnessSubagentAdapter, type StartGoalSubagentOptions } from "./subagent-adapter.js";
 import type { BlockedAuditEvidence, GoalAdapterCallbacks, GoalDagNode, GoalLedgerEvent, GoalOrchestrationState, GoalReferenceResolution, GoalRuntimeConfig, GoalSessionMetadata, GoalStatusInput, GoalStore, GoalSubagentRecord, GoalSummary, GoalToolResult, WorkspaceProfile, GoalTurnStop, HiddenGoalTurnResult, TurnContext } from "./types.js";
 export declare class GoalRuntime {
     private readonly store;
@@ -32,6 +33,12 @@ export declare class GoalRuntime {
     getGoalOrchestrationState(goalId: string): Promise<GoalOrchestrationState>;
     planGoalDag(goalId: string, inputs: GoalDagPlanNodeInput[], options?: GoalDagPlanOptions): Promise<GoalDagNode[]>;
     getGoalDagReadyQueue(goalId: string, policy?: GoalDagSchedulingPolicy): Promise<GoalDagReadyQueue>;
+    startGoalSubagent(adapter: HarnessSubagentAdapter, node: GoalDagNode, options: StartGoalSubagentOptions): Promise<GoalSubagentRecord>;
+    sendGoalSubagentPrompt(adapter: HarnessSubagentAdapter, subagent: GoalSubagentRecord, prompt: string, options?: {
+        metadata?: Record<string, unknown>;
+        now?: Date | string;
+    }): Promise<GoalSubagentRecord>;
+    syncGoalSubagent(adapter: HarnessSubagentAdapter, subagent: GoalSubagentRecord): Promise<GoalSubagentRecord>;
     resolveGoalReference(reference: string): Promise<GoalReferenceResolution>;
     saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void>;
     getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;

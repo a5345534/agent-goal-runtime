@@ -23,9 +23,10 @@ Other agent harness bridges are intentionally out of scope for this first implem
 The current orchestration-state slices record DAG nodes and subagent registry
 records through the portable store/runtime APIs, provide a default native Git
 workspace manager that can allocate dedicated controller worktrees/branches when
-workspace and branch are omitted, and expose deterministic DAG planning/scheduling
-helpers. They do not yet spawn harness-neutral subagents or validate subagent
-self-reports; those are follow-up slices.
+workspace and branch are omitted, expose deterministic DAG planning/scheduling
+helpers, and define a harness-neutral subagent adapter contract. They do not yet
+run the full autonomous controller loop or validate subagent self-reports; those
+are follow-up slices.
 
 ## Build and test
 
@@ -45,6 +46,24 @@ node dist/cli.js --state-root /tmp/agent-goal-smoke clear
 ```
 
 The CLI is only a debug/smoke surface. Full Codex-compatible auto-continuation requires a harness adapter.
+
+## Harness-neutral subagent adapter contract
+
+The portable core exports a `HarnessSubagentAdapter` contract for agent harnesses
+such as Pi, Codex, Claude Code, OpenCode, or a shell/JSON-RPC bridge. The
+contract covers:
+
+- starting a subagent session for a DAG node,
+- sending follow-up prompts,
+- polling session state,
+- optionally streaming harness events,
+- aborting a session.
+
+Helpers such as `startGoalSubagent()`, `sendGoalSubagentPrompt()`, and
+`syncGoalSubagentState()` translate harness-level session handles and status into
+durable `GoalSubagentRecord` updates. `GoalRuntime` wraps these helpers so a
+controller can persist subagent starts and state syncs without depending on any
+specific harness implementation.
 
 ## Goal DAG planning and scheduling
 

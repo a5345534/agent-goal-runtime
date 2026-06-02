@@ -10,6 +10,13 @@ import {
 import { parseGoalCommand, validateGoalObjective, type GoalCommand } from "./parser.js";
 import { renderBudgetLimitPrompt, renderContinuationPrompt, renderObjectiveUpdatedPrompt } from "./prompts.js";
 import { isAutoContinuableStatus, normalizeGoalStatus } from "./status.js";
+import {
+  sendGoalSubagentPrompt as sendGoalSubagentPromptThroughAdapter,
+  startGoalSubagent as startGoalSubagentThroughAdapter,
+  syncGoalSubagentState,
+  type HarnessSubagentAdapter,
+  type StartGoalSubagentOptions,
+} from "./subagent-adapter.js";
 import type {
   BlockedAuditEvidence,
   CompletionAuditResult,
@@ -152,6 +159,34 @@ export class GoalRuntime {
 
   async getGoalDagReadyQueue(goalId: string, policy: GoalDagSchedulingPolicy = {}): Promise<GoalDagReadyQueue> {
     return computeGoalDagReadyQueue(await this.getGoalOrchestrationState(goalId), policy);
+  }
+
+  async startGoalSubagent(
+    adapter: HarnessSubagentAdapter,
+    node: GoalDagNode,
+    options: StartGoalSubagentOptions,
+  ): Promise<GoalSubagentRecord> {
+    const { record } = await startGoalSubagentThroughAdapter(adapter, node, options);
+    await this.store.saveGoalSubagent(record);
+    await this.store.saveGoalDagNode({ ...node, status: "running", updatedAt: record.updatedAt });
+    return record;
+  }
+
+  async sendGoalSubagentPrompt(
+    adapter: HarnessSubagentAdapter,
+    subagent: GoalSubagentRecord,
+    prompt: string,
+    options: { metadata?: Record<string, unknown>; now?: Date | string } = {},
+  ): Promise<GoalSubagentRecord> {
+    const updated = await sendGoalSubagentPromptThroughAdapter(adapter, subagent, prompt, options);
+    await this.store.saveGoalSubagent(updated);
+    return updated;
+  }
+
+  async syncGoalSubagent(adapter: HarnessSubagentAdapter, subagent: GoalSubagentRecord): Promise<GoalSubagentRecord> {
+    const updated = await syncGoalSubagentState(adapter, subagent, { now: this.config.now() });
+    await this.store.saveGoalSubagent(updated);
+    return updated;
   }
 
   async resolveGoalReference(reference: string): Promise<GoalReferenceResolution> {

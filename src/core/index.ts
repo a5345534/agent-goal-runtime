@@ -8,3 +8,4 @@ export * from "./prompts.js";
 export * from "./runtime.js";
 export * from "./git-workspace.js";
 export * from "./dag-scheduler.js";
+export * from "./subagent-adapter.js";
