@@ -1,4 +1,4 @@
-import type { ContinuationReservation, GoalLedgerEvent, GoalRecord, GoalSessionMetadata, GoalStore, GoalSummary, WorkspaceProfile } from "./types.js";
+import type { ContinuationReservation, GoalDagNode, GoalLedgerEvent, GoalRecord, GoalSessionMetadata, GoalStore, GoalSubagentRecord, GoalSummary, WorkspaceProfile } from "./types.js";
 export declare class SQLiteGoalStore implements GoalStore {
     readonly dbPath: string;
     private db;
@@ -18,6 +18,12 @@ export declare class SQLiteGoalStore implements GoalStore {
     saveGoalSessionMetadata(metadata: GoalSessionMetadata): Promise<void>;
     getGoalSessionMetadata(sessionKey: string): Promise<GoalSessionMetadata | undefined>;
     listGoalSummaries(): Promise<GoalSummary[]>;
+    saveGoalDagNode(node: GoalDagNode): Promise<void>;
+    getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined>;
+    listGoalDagNodes(goalId: string): Promise<GoalDagNode[]>;
+    saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void>;
+    getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined>;
+    listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]>;
     saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void>;
     getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;
     listWorkspaceProfiles(): Promise<WorkspaceProfile[]>;

@@ -1,4 +1,5 @@
 export * from "./types.js";
+export * from "./validation-runner.js";
 export * from "./parser.js";
 export * from "./status.js";
 export * from "./state-root.js";
@@ -6,3 +7,8 @@ export * from "./memory-store.js";
 export * from "./sqlite-store.js";
 export * from "./prompts.js";
 export * from "./runtime.js";
+export * from "./git-workspace.js";
+export * from "./controller-loop.js";
+export * from "./dag-planner.js";
+export * from "./dag-scheduler.js";
+export * from "./subagent-adapter.js";

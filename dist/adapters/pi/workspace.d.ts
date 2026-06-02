@@ -4,6 +4,7 @@ export interface GoalWorkspaceFlags {
     branch?: string;
     ref?: string;
     legacySession?: boolean;
+    orchestrate?: boolean;
     remainingArgs: string;
 }
 export interface ResolvedWorkspaceBinding {

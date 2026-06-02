@@ -1,20 +1,51 @@
 import { randomUUID } from "node:crypto";
+import {
+  runGoalControllerLoop as runGoalControllerLoopCore,
+  runGoalControllerTick as runGoalControllerTickCore,
+  type GoalControllerLoopOptions,
+  type GoalControllerLoopResult,
+  type GoalControllerTickOptions,
+  type GoalControllerTickResult,
+} from "./controller-loop.js";
+import {
+  createGoalDagNodesFromObjective,
+  type GoalDagObjectivePlanOptions,
+  type GoalDagPlannedNodesResult,
+} from "./dag-planner.js";
+import {
+  createGoalDagNodes,
+  getGoalDagReadyQueue as computeGoalDagReadyQueue,
+  type GoalDagPlanNodeInput,
+  type GoalDagPlanOptions,
+  type GoalDagReadyQueue,
+  type GoalDagSchedulingPolicy,
+} from "./dag-scheduler.js";
 import { parseGoalCommand, validateGoalObjective, type GoalCommand } from "./parser.js";
 import { renderBudgetLimitPrompt, renderContinuationPrompt, renderObjectiveUpdatedPrompt } from "./prompts.js";
 import { isAutoContinuableStatus, normalizeGoalStatus } from "./status.js";
+import {
+  sendGoalSubagentPrompt as sendGoalSubagentPromptThroughAdapter,
+  startGoalSubagent as startGoalSubagentThroughAdapter,
+  syncGoalSubagentState,
+  type HarnessSubagentAdapter,
+  type StartGoalSubagentOptions,
+} from "./subagent-adapter.js";
 import type {
   BlockedAuditEvidence,
   CompletionAuditResult,
   ContinuationReservation,
   GoalAdapterCallbacks,
+  GoalDagNode,
   GoalLedgerEvent,
   GoalLedgerEventType,
+  GoalOrchestrationState,
   GoalRecord,
   GoalReferenceResolution,
   GoalRuntimeConfig,
   GoalSessionMetadata,
   GoalStatusInput,
   GoalStore,
+  GoalSubagentRecord,
   GoalSummary,
   GoalToolResult,
   WorkspaceProfile,
@@ -99,6 +130,94 @@ export class GoalRuntime {
 
   async listGoalSummaries(): Promise<GoalSummary[]> {
     return this.store.listGoalSummaries();
+  }
+
+  async saveGoalDagNode(node: GoalDagNode): Promise<void> {
+    await this.store.saveGoalDagNode(node);
+  }
+
+  async getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined> {
+    return this.store.getGoalDagNode(goalId, nodeId);
+  }
+
+  async listGoalDagNodes(goalId: string): Promise<GoalDagNode[]> {
+    return this.store.listGoalDagNodes(goalId);
+  }
+
+  async saveGoalSubagent(subagent: GoalSubagentRecord): Promise<void> {
+    await this.store.saveGoalSubagent(subagent);
+  }
+
+  async getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined> {
+    return this.store.getGoalSubagent(goalId, subagentId);
+  }
+
+  async listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]> {
+    return this.store.listGoalSubagents(goalId, nodeId);
+  }
+
+  async getGoalOrchestrationState(goalId: string): Promise<GoalOrchestrationState> {
+    const [nodes, subagents] = await Promise.all([
+      this.store.listGoalDagNodes(goalId),
+      this.store.listGoalSubagents(goalId),
+    ]);
+    return { goalId, nodes, subagents };
+  }
+
+  async planGoalDag(goalId: string, inputs: GoalDagPlanNodeInput[], options: GoalDagPlanOptions = {}): Promise<GoalDagNode[]> {
+    const nodes = createGoalDagNodes(goalId, inputs, options);
+    for (const node of nodes) await this.store.saveGoalDagNode(node);
+    return nodes;
+  }
+
+  async planGoalDagFromObjective(
+    goalId: string,
+    objective: string,
+    options: GoalDagObjectivePlanOptions = {},
+  ): Promise<GoalDagPlannedNodesResult> {
+    const plan = createGoalDagNodesFromObjective(goalId, objective, options);
+    for (const node of plan.nodes) await this.store.saveGoalDagNode(node);
+    return plan;
+  }
+
+  async getGoalDagReadyQueue(goalId: string, policy: GoalDagSchedulingPolicy = {}): Promise<GoalDagReadyQueue> {
+    return computeGoalDagReadyQueue(await this.getGoalOrchestrationState(goalId), policy);
+  }
+
+  async startGoalSubagent(
+    adapter: HarnessSubagentAdapter,
+    node: GoalDagNode,
+    options: StartGoalSubagentOptions,
+  ): Promise<GoalSubagentRecord> {
+    const { record } = await startGoalSubagentThroughAdapter(adapter, node, options);
+    await this.store.saveGoalSubagent(record);
+    await this.store.saveGoalDagNode({ ...node, status: "running", updatedAt: record.updatedAt });
+    return record;
+  }
+
+  async sendGoalSubagentPrompt(
+    adapter: HarnessSubagentAdapter,
+    subagent: GoalSubagentRecord,
+    prompt: string,
+    options: { metadata?: Record<string, unknown>; now?: Date | string } = {},
+  ): Promise<GoalSubagentRecord> {
+    const updated = await sendGoalSubagentPromptThroughAdapter(adapter, subagent, prompt, options);
+    await this.store.saveGoalSubagent(updated);
+    return updated;
+  }
+
+  async syncGoalSubagent(adapter: HarnessSubagentAdapter, subagent: GoalSubagentRecord): Promise<GoalSubagentRecord> {
+    const updated = await syncGoalSubagentState(adapter, subagent, { now: this.config.now() });
+    await this.store.saveGoalSubagent(updated);
+    return updated;
+  }
+
+  async runGoalControllerTick(goalId: string, options: GoalControllerTickOptions): Promise<GoalControllerTickResult> {
+    return runGoalControllerTickCore(this, goalId, { now: this.config.now, ...options });
+  }
+
+  async runGoalControllerLoop(goalId: string, options: GoalControllerLoopOptions): Promise<GoalControllerLoopResult> {
+    return runGoalControllerLoopCore(this, goalId, { now: this.config.now, ...options });
   }
 
   async resolveGoalReference(reference: string): Promise<GoalReferenceResolution> {
@@ -223,7 +342,7 @@ export class GoalRuntime {
     return { goal: updated, message: "Goal paused." };
   }
 
-  async resumeGoal(sessionKey: string): Promise<GoalToolResult> {
+  async resumeGoal(sessionKey: string, options: { continueIfIdle?: boolean } = {}): Promise<GoalToolResult> {
     await this.requireGoal(sessionKey);
     await this.accountUsage(sessionKey);
     const accounted = await this.requireGoal(sessionKey);
@@ -237,7 +356,7 @@ export class GoalRuntime {
     await this.appendLedger("goal_resumed", sessionKey, updated.goalId, { status: updated.status });
     await this.store.clearReservation(sessionKey);
     await this.callbacks.notifyGoalUpdated?.(updated);
-    await this.maybeContinueIfIdle(sessionKey);
+    if (options.continueIfIdle !== false) await this.maybeContinueIfIdle(sessionKey);
     return {
       goal: updated,
       message: updated.status === "budgetLimited" ? "Goal token budget is still exhausted." : "Goal resumed.",

@@ -38,7 +38,7 @@ test("goal monitor exposes state-appropriate lifecycle actions", () => {
   const active = new GoalMonitorController(summary("active"));
   const paused = new GoalMonitorController(summary("paused"));
 
-  assert.deepEqual(active.actions, ["pause", "clear", "close"]);
+  assert.deepEqual(active.actions, ["pause", "resume", "clear", "close"]);
   assert.deepEqual(paused.actions, ["resume", "clear", "close"]);
   assert.deepEqual(active.handleInput("\r"), { kind: "action", action: "pause" });
 });

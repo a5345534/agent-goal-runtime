@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { runGoalControllerLoop as runGoalControllerLoopCore, runGoalControllerTick as runGoalControllerTickCore, } from "./controller-loop.js";
+import { createGoalDagNodesFromObjective, } from "./dag-planner.js";
+import { createGoalDagNodes, getGoalDagReadyQueue as computeGoalDagReadyQueue, } from "./dag-scheduler.js";
 import { parseGoalCommand, validateGoalObjective } from "./parser.js";
 import { renderBudgetLimitPrompt, renderContinuationPrompt, renderObjectiveUpdatedPrompt } from "./prompts.js";
 import { isAutoContinuableStatus, normalizeGoalStatus } from "./status.js";
+import { sendGoalSubagentPrompt as sendGoalSubagentPromptThroughAdapter, startGoalSubagent as startGoalSubagentThroughAdapter, syncGoalSubagentState, } from "./subagent-adapter.js";
 export class GoalRuntime {
     store;
     callbacks;
@@ -60,6 +64,68 @@ export class GoalRuntime {
     }
     async listGoalSummaries() {
         return this.store.listGoalSummaries();
+    }
+    async saveGoalDagNode(node) {
+        await this.store.saveGoalDagNode(node);
+    }
+    async getGoalDagNode(goalId, nodeId) {
+        return this.store.getGoalDagNode(goalId, nodeId);
+    }
+    async listGoalDagNodes(goalId) {
+        return this.store.listGoalDagNodes(goalId);
+    }
+    async saveGoalSubagent(subagent) {
+        await this.store.saveGoalSubagent(subagent);
+    }
+    async getGoalSubagent(goalId, subagentId) {
+        return this.store.getGoalSubagent(goalId, subagentId);
+    }
+    async listGoalSubagents(goalId, nodeId) {
+        return this.store.listGoalSubagents(goalId, nodeId);
+    }
+    async getGoalOrchestrationState(goalId) {
+        const [nodes, subagents] = await Promise.all([
+            this.store.listGoalDagNodes(goalId),
+            this.store.listGoalSubagents(goalId),
+        ]);
+        return { goalId, nodes, subagents };
+    }
+    async planGoalDag(goalId, inputs, options = {}) {
+        const nodes = createGoalDagNodes(goalId, inputs, options);
+        for (const node of nodes)
+            await this.store.saveGoalDagNode(node);
+        return nodes;
+    }
+    async planGoalDagFromObjective(goalId, objective, options = {}) {
+        const plan = createGoalDagNodesFromObjective(goalId, objective, options);
+        for (const node of plan.nodes)
+            await this.store.saveGoalDagNode(node);
+        return plan;
+    }
+    async getGoalDagReadyQueue(goalId, policy = {}) {
+        return computeGoalDagReadyQueue(await this.getGoalOrchestrationState(goalId), policy);
+    }
+    async startGoalSubagent(adapter, node, options) {
+        const { record } = await startGoalSubagentThroughAdapter(adapter, node, options);
+        await this.store.saveGoalSubagent(record);
+        await this.store.saveGoalDagNode({ ...node, status: "running", updatedAt: record.updatedAt });
+        return record;
+    }
+    async sendGoalSubagentPrompt(adapter, subagent, prompt, options = {}) {
+        const updated = await sendGoalSubagentPromptThroughAdapter(adapter, subagent, prompt, options);
+        await this.store.saveGoalSubagent(updated);
+        return updated;
+    }
+    async syncGoalSubagent(adapter, subagent) {
+        const updated = await syncGoalSubagentState(adapter, subagent, { now: this.config.now() });
+        await this.store.saveGoalSubagent(updated);
+        return updated;
+    }
+    async runGoalControllerTick(goalId, options) {
+        return runGoalControllerTickCore(this, goalId, { now: this.config.now, ...options });
+    }
+    async runGoalControllerLoop(goalId, options) {
+        return runGoalControllerLoopCore(this, goalId, { now: this.config.now, ...options });
     }
     async resolveGoalReference(reference) {
         const trimmed = reference.trim();
@@ -165,7 +231,7 @@ export class GoalRuntime {
         this.markTurnStopped(sessionKey, "pause", updated.goalId, "Goal paused.");
         return { goal: updated, message: "Goal paused." };
     }
-    async resumeGoal(sessionKey) {
+    async resumeGoal(sessionKey, options = {}) {
         await this.requireGoal(sessionKey);
         await this.accountUsage(sessionKey);
         const accounted = await this.requireGoal(sessionKey);
@@ -179,7 +245,8 @@ export class GoalRuntime {
         await this.appendLedger("goal_resumed", sessionKey, updated.goalId, { status: updated.status });
         await this.store.clearReservation(sessionKey);
         await this.callbacks.notifyGoalUpdated?.(updated);
-        await this.maybeContinueIfIdle(sessionKey);
+        if (options.continueIfIdle !== false)
+            await this.maybeContinueIfIdle(sessionKey);
         return {
             goal: updated,
             message: updated.status === "budgetLimited" ? "Goal token budget is still exhausted." : "Goal resumed.",

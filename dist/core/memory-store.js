@@ -4,6 +4,8 @@ export class MemoryGoalStore {
     ledger = [];
     metadata = new Map();
     profiles = new Map();
+    dagNodes = new Map();
+    subagents = new Map();
     async getCurrentGoal(sessionKey) {
         const goal = this.goals.get(sessionKey);
         return goal ? { ...goal } : undefined;
@@ -54,6 +56,32 @@ export class MemoryGoalStore {
         const summaries = [...this.goals.values()].map((goal) => goalToSummary(goal, this.metadata.get(goal.sessionKey)));
         return summaries.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
     }
+    async saveGoalDagNode(node) {
+        this.dagNodes.set(dagNodeKey(node.goalId, node.nodeId), cloneDagNode(node));
+    }
+    async getGoalDagNode(goalId, nodeId) {
+        const node = this.dagNodes.get(dagNodeKey(goalId, nodeId));
+        return node ? cloneDagNode(node) : undefined;
+    }
+    async listGoalDagNodes(goalId) {
+        return [...this.dagNodes.values()]
+            .filter((node) => node.goalId === goalId)
+            .map(cloneDagNode)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.nodeId.localeCompare(b.nodeId));
+    }
+    async saveGoalSubagent(subagent) {
+        this.subagents.set(subagentKey(subagent.goalId, subagent.subagentId), cloneSubagent(subagent));
+    }
+    async getGoalSubagent(goalId, subagentId) {
+        const subagent = this.subagents.get(subagentKey(goalId, subagentId));
+        return subagent ? cloneSubagent(subagent) : undefined;
+    }
+    async listGoalSubagents(goalId, nodeId) {
+        return [...this.subagents.values()]
+            .filter((subagent) => subagent.goalId === goalId && (nodeId === undefined || subagent.nodeId === nodeId))
+            .map(cloneSubagent)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.subagentId.localeCompare(b.subagentId));
+    }
     async saveWorkspaceProfile(profile) {
         this.profiles.set(profile.name, { ...profile });
     }
@@ -68,10 +96,39 @@ export class MemoryGoalStore {
         return this.profiles.delete(name);
     }
 }
+function dagNodeKey(goalId, nodeId) {
+    return `${goalId}:${nodeId}`;
+}
+function subagentKey(goalId, subagentId) {
+    return `${goalId}:${subagentId}`;
+}
 function cloneLedgerEvent(event) {
     return {
         ...event,
         details: event.details ? { ...event.details } : undefined,
+    };
+}
+function cloneDagNode(node) {
+    return {
+        ...node,
+        dependencyNodeIds: [...node.dependencyNodeIds],
+        expectedOutputs: [...node.expectedOutputs],
+        validators: [...node.validators],
+        conflictHints: node.conflictHints
+            ? {
+                files: node.conflictHints.files ? [...node.conflictHints.files] : undefined,
+                modules: node.conflictHints.modules ? [...node.conflictHints.modules] : undefined,
+                capabilities: node.conflictHints.capabilities ? [...node.conflictHints.capabilities] : undefined,
+            }
+            : undefined,
+        completionGates: [...node.completionGates],
+    };
+}
+function cloneSubagent(subagent) {
+    return {
+        ...subagent,
+        prompts: [...subagent.prompts],
+        controllerValidationResults: subagent.controllerValidationResults ? [...subagent.controllerValidationResults] : undefined,
     };
 }
 function goalToSummary(goal, metadata) {

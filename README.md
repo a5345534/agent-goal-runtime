@@ -14,10 +14,20 @@ This project provides the common framework first:
 - model-visible `get_goal`, `create_goal`, and restricted `update_goal` behavior
 - optional completion audit gate behind `update_goal({"status":"complete"})`, without adding `goal_complete`
 - durable execution ledger for lifecycle, continuation, audit, completion, and blocked evidence
+- durable task DAG and subagent registry data models for future controller orchestration
 - prompt rendering that treats goal objectives as untrusted user-provided task data
 - Pi extension adapter with transcript-aware blocked audit, slash-command token budgets, active-goal reminders, heuristic completion audit, post-stop tool guarding, abort/error pausing, and stale-continuation guards
 
 Other agent harness bridges are intentionally out of scope for this first implementation and should be added through separate changes.
+
+The current orchestration-state slices record DAG nodes and subagent registry
+records through the portable store/runtime APIs, provide a default native Git
+workspace manager that can allocate dedicated controller and subagent
+worktrees/branches, expose deterministic objective-to-DAG planning and scheduling
+helpers, define a harness-neutral subagent adapter contract, provide a Pi
+implementation backed by detached background Pi RPC sessions, and include a
+portable controller orchestration loop wired to Pi `/goal --orchestrate` starts,
+including polling supervision and controller-owned validation.
 
 ## Build and test
 
@@ -37,6 +47,89 @@ node dist/cli.js --state-root /tmp/agent-goal-smoke clear
 ```
 
 The CLI is only a debug/smoke surface. Full Codex-compatible auto-continuation requires a harness adapter.
+
+## Harness-neutral subagent adapter contract
+
+The portable core exports a `HarnessSubagentAdapter` contract for agent harnesses
+such as Pi, Codex, Claude Code, OpenCode, or a shell/JSON-RPC bridge. The
+contract covers:
+
+- starting a subagent session for a DAG node,
+- sending follow-up prompts,
+- polling session state,
+- optionally streaming harness events,
+- aborting a session.
+
+Helpers such as `startGoalSubagent()`, `sendGoalSubagentPrompt()`, and
+`syncGoalSubagentState()` translate harness-level session handles and status into
+durable `GoalSubagentRecord` updates. `GoalRuntime` wraps these helpers so a
+controller can persist subagent starts and state syncs without depending on any
+specific harness implementation.
+
+The Pi adapter exports `PiHarnessSubagentAdapter`, which launches detached Pi RPC
+sessions for DAG nodes, resumes existing session files for follow-up prompts, and
+infers subagent state from Pi JSONL transcripts. Subagents are instructed to use
+`SUBAGENT_RESULT:` / `SUBAGENT_BLOCKED:` markers; those markers are controller
+inputs only, not completion gates.
+
+## Controller orchestration loop
+
+`runGoalControllerTick()` and `runGoalControllerLoop()` provide the first portable
+controller runtime:
+
+- synchronize active subagents through the configured harness adapter,
+- keep subagent self-reports in `controllerValidating` unless a controller
+  validator approves them,
+- apply controller validation results to complete, block, or follow up a node,
+- compute the next ready queue and start schedulable DAG nodes,
+- accept a workspace allocator hook so native Git worktree allocation can remain
+  a strategy instead of hard-coded controller behavior.
+
+`GoalRuntime` exposes the same APIs as instance methods so adapters can drive the
+loop without reaching into the store directly.
+
+## Goal DAG planning and scheduling
+
+The portable core exports deterministic DAG helpers for controller adapters:
+
+- `planGoalDagFromObjective()` converts an objective into `GoalDagPlanNodeInput`
+  records using either a single-node fallback or markdown task-list parsing,
+- task-list annotations such as `[id: ...]`, `[after: ...]`, `[parallel]`,
+  `[validators: ...]`, `[outputs: ...]`, and conflict hints (`[files: ...]`,
+  `[modules: ...]`, `[capabilities: ...]`) let callers shape the generated DAG
+  without a harness-specific planner,
+- `createGoalDagNodes()` normalizes proposed DAG node inputs into durable node
+  records,
+- `assertValidGoalDag()` / `validateGoalDag()` reject duplicate nodes, missing
+  dependencies, self-dependencies, and cycles,
+- `getGoalDagReadyQueue()` computes runnable nodes by dependency completion,
+  current subagent activity, max concurrency, and conflict hints.
+
+`GoalRuntime` wraps these through `planGoalDag()`, `planGoalDagFromObjective()`,
+and `getGoalDagReadyQueue()` so harness adapters can persist a plan, ask which
+nodes are schedulable, and keep subagent self-reports separate from controller
+validation.
+
+## Native Git workspace manager
+
+The portable core exports `NativeGitWorkspaceManager` for harnesses that want the
+default Git-backed workspace strategy. It can:
+
+- find the enclosing Git repository from an invocation directory,
+- resolve a base ref from explicit options, configured defaults, controller
+  workspace branch, remote default branch, current branch, or HEAD,
+- create unique controller and subagent worktrees/branches under `.worktrees/`,
+- record allocation shapes suitable for goal/subagent state metadata,
+- and clean up generated worktrees/branches when a host policy allows it.
+
+Subagent allocation is available through `allocateSubagentWorkspace()` and the
+controller-loop adapter `createNativeGitSubagentWorkspaceAllocator()`. The
+allocator returns the subagent id, worktree path, branch, and allocation metadata
+for the controller loop's workspace hook, so each DAG node can run in its own
+branch/worktree without coupling the scheduler to Git.
+
+This manager uses only native `git` commands and does not require Pi, GitHub,
+OpenSpec, or project-local helper scripts.
 
 ## Pi bridge
 
@@ -72,29 +165,43 @@ After the GitHub repository is published, install the pinned release from GitHub
 pi install git:github.com/a5345534/agent-goal-runtime@v0.1.0
 ```
 
-The Pi bridge registers:
+The Pi bridge registers these commands and model-visible tools:
 
-- `/goal`
-- `/goal --workspace <path-or-profile> --branch <branch> <objective>`
-- `/goal --workspace <path-or-profile> --ref <ref> <objective>`
-- `/goal --tokens 100k --workspace <path-or-profile> --branch <branch> <objective>`
-- `/goal --legacy-session <objective>` for an explicit compatibility/session-local goal
-- `/goal workspace add <name> --path <path> [--branch <branch>|--ref <ref>]`
-- `/goal workspace list|show|remove`
-- `/goal list`
-- `/goal status|monitor|pause|resume|clear <goal-ref>`
-- `/goal edit <goal-ref> <objective>`
-- `/goal budget <goal-ref> <token-budget>`
-- session-local legacy `/goal edit`, `/goal pause`, `/goal resume`, `/goal clear`
-- `get_goal`
-- `create_goal`
-- `update_goal`
+| Command / tool | Purpose |
+| --- | --- |
+| `/goal` | Show the current session's goal, status, elapsed time, token usage/budget, turn count, and useful subcommands. |
+| `/goal --workspace <path-or-profile> --branch <branch> <objective>` | Start a new goal-owned background Pi execution session bound to an explicit workspace and git branch. The controller session remains in place. |
+| `/goal --workspace <path-or-profile> --ref <ref> <objective>` | Start a new goal-owned background Pi execution session bound to an explicit workspace and git ref instead of a branch. |
+| `/goal --tokens <budget> --workspace <path-or-profile> --branch <branch> <objective>` | Start a workspace-bound background goal with a token budget, for example `100k` or `1.5m`. |
+| `/goal --orchestrate --workspace <path-or-profile> --branch <branch> <objective>` | Start a goal-owned controller session, plan the objective into a DAG, allocate native Git subagent worktrees, launch ready Pi subagents, and keep polling the controller loop. |
+| `/goal --orchestrate <objective>` | Auto-allocate a native Git controller worktree/branch from the current repository, then run the orchestrated controller flow. |
+| `/goal --legacy-session <objective>` | Create an explicit compatibility goal in the current Pi session instead of a goal-owned background execution session. |
+| `/goal workspace add <name> --path <path> [--branch <branch>|--ref <ref>]` | Save a named workspace profile so later `/goal --workspace <name> ...` commands can reuse the path and optional branch/ref binding. |
+| `/goal workspace list` | List saved workspace profiles. |
+| `/goal workspace show <name>` | Show one saved workspace profile. |
+| `/goal workspace remove <name>` | Remove a saved workspace profile after confirmation. |
+| `/goal list` | List recent materialized goals and open the selected goal in the read-only monitor. |
+| `/goal status <goal-ref>` | Show status and metadata for a specific goal resolved by full id or unambiguous short id. |
+| `/goal monitor <goal-ref>` | Open a read-only monitor for a specific goal transcript and lifecycle controls. |
+| `/goal history <goal-ref>` | Load a bounded, read-only transcript excerpt for a specific goal into the current controller session so the agent can inspect prior work without opening model-visible id lookup tools. |
+| `/goal pause <goal-ref>` | Pause a specific goal so automatic continuation stops until it is resumed. |
+| `/goal resume <goal-ref>` | Resume a paused/blocked/budget-limited/usage-limited goal when policy allows continuation. |
+| `/goal clear <goal-ref>` | Clear runtime state for a specific goal without deleting its execution workspace or worktree. |
+| `/goal edit <goal-ref> <objective>` | Replace a specific goal's objective. |
+| `/goal budget <goal-ref> <token-budget>` | Replace a specific goal's token budget without resetting already-used tokens. |
+| session-local legacy `/goal edit` | Edit the current session-bound goal objective, prompting with an editor when no objective is supplied. |
+| session-local legacy `/goal pause` | Pause the current session-bound goal. |
+| session-local legacy `/goal resume` | Resume the current session-bound goal. |
+| session-local legacy `/goal clear` | Clear the current session-bound goal state only. |
+| `get_goal` | Model-visible tool that returns the current Pi session goal, status, budget, usage, and elapsed time. |
+| `create_goal` | Model-visible Codex-compatible tool that creates a current-session goal only when explicitly requested and no current goal exists. |
+| `update_goal` | Model-visible Codex-compatible tool that marks the current goal `complete` or `blocked` subject to runtime audit rules. |
 
 It deliberately does **not** register `goal_complete`, `pause_goal`, or `abort_goal`; completion remains `update_goal({"status":"complete"})`.
 
-`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New Pi goals require an explicit execution workspace binding unless the user opts into the explicit `--legacy-session` compatibility path. Git-backed workspaces also require an explicit branch/ref binding, either inline or supplied by a named workspace profile. The adapter validates the configured workspace with read-only filesystem/git inspection and refuses missing, inaccessible, non-git branch/ref, branch/ref-mismatched, or host-policy-disallowed bindings; it does not create/delete worktrees, create branches, or switch branches. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces.
+`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New non-orchestrated Pi goals require an explicit execution workspace binding unless the user opts into the explicit `--legacy-session` compatibility path. Git-backed workspaces also require an explicit branch/ref binding, either inline or supplied by a named workspace profile. The adapter validates configured workspaces with read-only filesystem/git inspection and refuses missing, inaccessible, non-git branch/ref, branch/ref-mismatched, or host-policy-disallowed bindings; normal non-orchestrated starts do not create/delete worktrees, create branches, or switch branches. With explicit `--orchestrate`, the controller can either use the supplied workspace or auto-allocate a native Git controller worktree/branch when workspace/branch/ref are omitted, then create subagent worktrees/branches under `.worktrees/`. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces. Set `AGENT_GOAL_PI_CONTROLLER_POLL_MS=0` to disable polling, and set `AGENT_GOAL_PI_RUN_VALIDATORS=1` to let controller validation execute shell validators instead of only checking expected outputs and recording skipped validators.
 
-Bare `/goal` shows the current session's objective, status, elapsed time, token usage/budget, goal-turn count, and currently useful subcommands. `/goal list` lists recent materialized goals from the portable registry, including legacy session-bound goals. Selecting a goal opens a read-only monitor that renders the goal session transcript/history, auto-refreshes while tailing live output, and keeps lifecycle actions as explicit buttons/commands rather than free-form input into the goal session. Targeted commands resolve full or short goal ids and reject ambiguous prefixes. The Pi status line uses compact status strings such as `🎯 active 18k/100k`, `🎯 paused`, `🎯 blocked`, `🎯 budget 100k/100k`, or `🎯 complete`.
+Bare `/goal` shows the current session's objective, status, elapsed time, token usage/budget, goal-turn count, and currently useful subcommands. `/goal list` lists recent materialized goals from the portable registry, including legacy session-bound goals. Selecting a goal opens a read-only monitor that renders the goal session transcript/history, auto-refreshes while tailing live output, and keeps lifecycle actions as explicit buttons/commands rather than free-form input into the goal session. `/goal history <goal-ref>` resolves the same full/short ids and appends a bounded recent transcript excerpt (default last 80 rendered lines, capped by characters) as a visible custom message in the controller session; it does not mutate the goal, open the execution session, or add model-visible tools. Targeted commands resolve full or short goal ids and reject ambiguous prefixes. The Pi status line uses compact status strings such as `🎯 active 18k/100k`, `🎯 paused`, `🎯 blocked`, `🎯 budget 100k/100k`, or `🎯 complete`.
 
 Hidden continuation is implemented with Pi custom hidden messages using `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })`, guarded by runtime continuation reservations and adapter-side `attemptId` idempotency. The Pi bridge keeps the portable SQLite store canonical and mirrors goal snapshots, reservations, metadata, workspace profiles, clears, and ledger events into Pi custom session entries (`agent-goal-runtime-state`) so Pi session history can carry host-native goal traces without becoming mandatory storage for non-Pi adapters. While a goal is active, the Pi bridge also injects an ordinary-turn reminder that preserves the full objective as untrusted user-provided task data and explicitly keeps system/developer/workspace/tool policy above the goal. If Pi reports a goal turn ending with `aborted` or `error`, the bridge pauses the goal and requires `/goal resume` before automatic continuation resumes. When the failed turn includes partial assistant text or tool-call traces, the bridge preserves a hidden recovery context that treats the excerpt as untrusted transcript evidence for the later resume. Queued hidden continuations carry an adapter marker with goal id, observed update timestamp, and attempt id. Stale continuations are rewritten into non-runnable bookkeeping, and older duplicate continuations for the same active goal are superseded so only the latest matching continuation remains runnable.
 
