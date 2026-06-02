@@ -22,12 +22,11 @@ Other agent harness bridges are intentionally out of scope for this first implem
 
 The current orchestration-state slices record DAG nodes and subagent registry
 records through the portable store/runtime APIs, provide a default native Git
-workspace manager that can allocate dedicated controller worktrees/branches when
-workspace and branch are omitted, expose deterministic DAG planning/scheduling
-helpers, define a harness-neutral subagent adapter contract, provide a Pi
-implementation backed by detached background Pi RPC sessions, and include a
-portable controller orchestration loop. Full Pi `/goal` command wiring and native
-subagent worktree allocation are follow-up slices.
+workspace manager that can allocate dedicated controller and subagent
+worktrees/branches, expose deterministic DAG planning/scheduling helpers, define
+a harness-neutral subagent adapter contract, provide a Pi implementation backed
+by detached background Pi RPC sessions, and include a portable controller
+orchestration loop. Full Pi `/goal` command wiring is a follow-up slice.
 
 ## Build and test
 
@@ -82,8 +81,8 @@ controller runtime:
   validator approves them,
 - apply controller validation results to complete, block, or follow up a node,
 - compute the next ready queue and start schedulable DAG nodes,
-- accept a workspace allocator hook so future slices can attach native Git
-  worktree allocation without coupling the core loop to one strategy.
+- accept a workspace allocator hook so native Git worktree allocation can remain
+  a strategy instead of hard-coded controller behavior.
 
 `GoalRuntime` exposes the same APIs as instance methods so adapters can drive the
 loop without reaching into the store directly.
@@ -109,11 +108,17 @@ The portable core exports `NativeGitWorkspaceManager` for harnesses that want th
 default Git-backed workspace strategy. It can:
 
 - find the enclosing Git repository from an invocation directory,
-- resolve a base ref from explicit options, configured defaults, remote default
-  branch, current branch, or HEAD,
-- create a unique controller worktree and branch under `.worktrees/`,
-- record an allocation shape suitable for goal state metadata,
+- resolve a base ref from explicit options, configured defaults, controller
+  workspace branch, remote default branch, current branch, or HEAD,
+- create unique controller and subagent worktrees/branches under `.worktrees/`,
+- record allocation shapes suitable for goal/subagent state metadata,
 - and clean up generated worktrees/branches when a host policy allows it.
+
+Subagent allocation is available through `allocateSubagentWorkspace()` and the
+controller-loop adapter `createNativeGitSubagentWorkspaceAllocator()`. The
+allocator returns the subagent id, worktree path, branch, and allocation metadata
+for the controller loop's workspace hook, so each DAG node can run in its own
+branch/worktree without coupling the scheduler to Git.
 
 This manager uses only native `git` commands and does not require Pi, GitHub,
 OpenSpec, or project-local helper scripts.
