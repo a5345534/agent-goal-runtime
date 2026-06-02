@@ -86,7 +86,11 @@ controller runtime:
   a strategy instead of hard-coded controller behavior.
 
 `GoalRuntime` exposes the same APIs as instance methods so adapters can drive the
-loop without reaching into the store directly.
+loop without reaching into the store directly. When every DAG node reaches a
+terminal state, adapters can call `finalizeGoalFromDagTerminalState()` to close
+the parent goal: all `complete`/`superseded` nodes mark the goal `complete`, while
+any `blocked`/`failed` node marks the goal `blocked` with ledger evidence from the
+terminal DAG state.
 
 ## Goal DAG planning and scheduling
 
@@ -130,8 +134,11 @@ allocator returns the subagent id, worktree path, branch, and allocation metadat
 for the controller loop's workspace hook, so each DAG node can run in its own
 branch/worktree without coupling the scheduler to Git. Cleanup helpers
 `cleanupTerminalSubagentWorkspaces()` and `cleanupSubagentWorkspace()` are
-explicit host-policy calls; the controller loop does not delete worktrees
-implicitly.
+explicit host-policy calls; the portable controller loop does not delete
+worktrees implicitly. Harness adapters decide when terminal cleanup is safe; the
+Pi adapter removes completed subagent worktrees and auto-allocated controller
+worktrees after validated terminal closeout, while preserving explicit user
+workspaces and blocked/failed subagent worktrees for inspection.
 
 This manager uses only native `git` commands and does not require Pi, GitHub,
 OpenSpec, or project-local helper scripts.
@@ -195,7 +202,7 @@ The Pi bridge registers these commands and model-visible tools:
 
 It deliberately does **not** register `goal_complete`, `pause_goal`, or `abort_goal`; completion remains `update_goal({"status":"complete"})`.
 
-`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New Pi goals are always orchestrated. Free-form objectives produce one execution node; multi-node DAGs require `/goal --dag <path>` with a JSON file matching `schemas/goal-dag.schema.json`. The controller can either use the supplied Git workspace or auto-allocate a native Git controller worktree/branch when workspace/branch/ref are omitted, then create subagent worktrees/branches under `.worktrees/`. Controller startup reports planned/started counts to the caller but does not send an initial model prompt to the controller session; token-consuming turns begin with subagent work or later controller validation/decision prompts. Explicit Git workspaces require a matching `--branch` or `--ref`. The adapter validates configured workspaces with read-only filesystem/git inspection and refuses missing, inaccessible, non-git, branch/ref-mismatched, or host-policy-disallowed bindings. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces. Set `AGENT_GOAL_PI_CONTROLLER_POLL_MS=0` to disable polling, and set `AGENT_GOAL_PI_RUN_VALIDATORS=1` to let controller validation execute shell validators instead of only checking expected outputs and recording skipped validators.
+`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New Pi goals are always orchestrated. Free-form objectives produce one execution node; multi-node DAGs require `/goal --dag <path>` with a JSON file matching `schemas/goal-dag.schema.json`. The controller can either use the supplied Git workspace or auto-allocate a native Git controller worktree/branch when workspace/branch/ref are omitted, then create subagent worktrees/branches under `.worktrees/`. Controller startup reports planned/started counts to the caller but does not send an initial model prompt to the controller session; token-consuming turns begin with subagent work or later controller validation/decision prompts. Explicit Git workspaces require a matching `--branch` or `--ref`. The adapter validates configured workspaces with read-only filesystem/git inspection and refuses missing, inaccessible, non-git, branch/ref-mismatched, or host-policy-disallowed bindings. Pi persists orchestration state in the goal store and restores active controller pollers on later session starts or `/goal` command entry. After all DAG nodes are terminal and controller validation passes, Pi marks the parent goal complete/blocked, clears stale subagent error notes, stops the controller poller, removes completed subagent worktrees, and removes auto-allocated controller worktrees; explicit workspaces and blocked/failed subagent worktrees are preserved. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces. Set `AGENT_GOAL_PI_CONTROLLER_POLL_MS=0` to disable polling, and set `AGENT_GOAL_PI_RUN_VALIDATORS=1` to let controller validation execute shell validators instead of only checking expected outputs and recording skipped validators.
 
 Bare `/goal` shows the current/default goal's objective, status, elapsed time, token usage/budget, goal-turn count, and currently useful subcommands. `/goal status` groups the objective, workspace, session, DAG summary, DAG nodes, and subagent records into readable sections with shortened ids/paths, and reports stalled DAGs when an otherwise active goal has only terminal failed/blocked nodes. `/goal monitor` opens a live dashboard that refreshes DAG and subagent state every second, showing node/subagent status counts, runtime duration, last activity age, branch/workspace, validation, notes, and transcript tail. `/goal list` lists recent materialized goals from the portable registry. Selecting a goal opens the same read-only monitor and keeps lifecycle actions as explicit buttons/commands rather than free-form input into the goal session. Targeted commands resolve full or short goal ids and reject ambiguous prefixes; when the goal-ref is omitted, commands prefer the current controller session's goal, then the latest non-terminal goal, then the latest goal. The Pi status line uses compact status strings such as `🎯 active 18k/100k`, `🎯 paused`, `🎯 blocked`, `🎯 budget 100k/100k`, or `🎯 complete`.
 
