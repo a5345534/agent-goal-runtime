@@ -10,5 +10,6 @@ export * from "./runtime.js";
 export * from "./git-workspace.js";
 export * from "./controller-loop.js";
 export * from "./dag-planner.js";
+export * from "./dag-file.js";
 export * from "./dag-scheduler.js";
 export * from "./subagent-adapter.js";

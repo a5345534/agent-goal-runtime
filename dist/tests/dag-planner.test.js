@@ -15,59 +15,23 @@ test("objective DAG planner creates one execution node for unstructured objectiv
     assert.deepEqual(plan.nodes[0]?.validators, ["npm test"]);
     assert.deepEqual(plan.nodes[0]?.expectedOutputs, ["src/payroll.ts"]);
     assert.equal(plan.nodes[0]?.workspaceStrategy, "native-git-worktree");
-    assert.match(plan.rationale[0] ?? "", /No explicit task list/);
+    assert.match(plan.rationale[0] ?? "", /one controller-owned execution node/);
 });
-test("objective DAG planner parses task lists, annotations, and sequential dependencies", () => {
+test("objective DAG planner no longer parses markdown task lists", () => {
     const objective = [
         "Implement goal runtime:",
-        "- Add core state [id: core-state] [files: src/core/types.ts] [validators: npm test|npm run check]",
-        "- Add Pi adapter [after: core-state] [modules: pi]",
-        "- Update docs [parallel] [outputs: README.md]",
-    ].join("\n");
-    const plan = planGoalDagFromObjective("goal-1", objective, { now, defaultValidators: ["npm test"] });
-    assert.deepEqual(plan.nodeInputs.map((node) => node.nodeId), ["core-state", "add-pi-adapter", "update-docs"]);
-    assert.deepEqual(plan.nodeInputs[0]?.dependencyNodeIds, []);
-    assert.deepEqual(plan.nodeInputs[1]?.dependencyNodeIds, ["core-state"]);
-    assert.deepEqual(plan.nodeInputs[2]?.dependencyNodeIds, []);
-    assert.deepEqual(plan.nodeInputs[0]?.validators, ["npm test", "npm run check"]);
-    assert.deepEqual(plan.nodeInputs[1]?.validators, ["npm test"]);
-    assert.deepEqual(plan.nodeInputs[0]?.conflictHints?.files, ["src/core/types.ts"]);
-    assert.deepEqual(plan.nodeInputs[1]?.conflictHints?.modules, ["pi"]);
-    assert.deepEqual(plan.nodeInputs[2]?.expectedOutputs, ["README.md"]);
-    assert.match(plan.warnings[0] ?? "", /opted out/);
-});
-test("objective DAG planner supports documented headings, aliases, and value separators", () => {
-    const objective = [
-        "## Define payroll spec [id: payroll-spec] [output: openspec/changes/payroll/tasks.md] [check: openspec validate payroll --strict]",
-        "- [id: payroll-doctypes] Add payroll DocTypes [depends: payroll-spec] [file: payroll/doctype.json] [capability: payroll]",
-        "1. Add payroll tests [dependencies: payroll-doctypes] [expected-outputs: tests/payroll.py | tests/fixtures.json] [checks: pytest, npm test]",
+        "- [id: core-state] Add core state [outputs: src/core/types.ts]",
+        "- [id: pi-adapter] Add Pi adapter [after: core-state]",
     ].join("\n");
     const plan = planGoalDagFromObjective("goal-1", objective, { now });
-    assert.deepEqual(plan.nodeInputs.map((node) => node.nodeId), ["payroll-spec", "payroll-doctypes", "add-payroll-tests"]);
-    assert.deepEqual(plan.nodeInputs[0]?.expectedOutputs, ["openspec/changes/payroll/tasks.md"]);
-    assert.deepEqual(plan.nodeInputs[0]?.validators, ["openspec validate payroll --strict"]);
-    assert.deepEqual(plan.nodeInputs[1]?.dependencyNodeIds, ["payroll-spec"]);
-    assert.deepEqual(plan.nodeInputs[1]?.conflictHints?.files, ["payroll/doctype.json"]);
-    assert.deepEqual(plan.nodeInputs[1]?.conflictHints?.capabilities, ["payroll"]);
-    assert.deepEqual(plan.nodeInputs[2]?.dependencyNodeIds, ["payroll-doctypes"]);
-    assert.deepEqual(plan.nodeInputs[2]?.expectedOutputs, ["tests/payroll.py", "tests/fixtures.json"]);
-    assert.deepEqual(plan.nodeInputs[2]?.validators, ["pytest", "npm test"]);
+    assert.equal(plan.nodeInputs.length, 1);
+    assert.equal(plan.nodeInputs[0]?.objective, objective);
+    assert.deepEqual(plan.nodeInputs[0]?.dependencyNodeIds, []);
 });
-test("objective DAG planner supports independent dependency mode", () => {
-    const plan = planGoalDagFromObjective("goal-1", ["1. Implement attendance", "2. Implement payroll", "3. Implement docs"].join("\n"), { now, dependencyMode: "independent" });
-    assert.deepEqual(plan.nodeInputs.map((node) => node.dependencyNodeIds), [[], [], []]);
-});
-test("objective DAG planner rejects over-large plans", () => {
-    assert.throws(() => planGoalDagFromObjective("goal-1", ["- one", "- two"].join("\n"), { maxNodes: 1 }), /exceeding maxNodes=1/);
-});
-test("runtime persists objective-planned DAG nodes", async () => {
+test("runtime persists objective-planned single fallback node", async () => {
     const runtime = new GoalRuntime({ store: new MemoryGoalStore(), config: { now: () => new Date(now) } });
     const plan = await runtime.planGoalDagFromObjective("goal-1", ["- Implement core", "- Implement adapter"].join("\n"), { now });
-    assert.deepEqual(plan.nodes.map((node) => node.nodeId), ["implement-core", "implement-adapter"]);
-    assert.deepEqual((await runtime.getGoalDagReadyQueue("goal-1")).ready.map((node) => node.nodeId), ["implement-core"]);
-    const first = await runtime.getGoalDagNode("goal-1", "implement-core");
-    assert.ok(first);
-    await runtime.saveGoalDagNode({ ...first, status: "complete", updatedAt: "2026-06-02T00:01:00.000Z" });
-    assert.deepEqual((await runtime.getGoalDagReadyQueue("goal-1")).ready.map((node) => node.nodeId), ["implement-adapter"]);
+    assert.equal(plan.nodes.length, 1);
+    assert.deepEqual((await runtime.getGoalDagReadyQueue("goal-1")).ready.map((node) => node.nodeId), [plan.nodes[0]?.nodeId]);
 });
 //# sourceMappingURL=dag-planner.test.js.map

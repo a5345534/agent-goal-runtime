@@ -91,15 +91,13 @@ loop without reaching into the store directly.
 ## Goal DAG planning and scheduling
 
 The portable core exports deterministic DAG helpers for controller adapters. See
-[`docs/goal-dag-format.md`](docs/goal-dag-format.md) for the user-facing objective
-format supported by `/goal <objective>`.
+[`docs/goal-dag-format.md`](docs/goal-dag-format.md) for the user-facing JSON DAG
+file format supported by `/goal --dag <path>`.
 
-- `planGoalDagFromObjective()` converts an objective into `GoalDagPlanNodeInput`
-  records using either a single-node fallback or explicit markdown task-list / heading parsing,
-- task-list annotations such as `[id: ...]`, `[after: ...]`, `[parallel]`,
-  `[validators: ...]`, `[outputs: ...]`, and conflict hints (`[files: ...]`,
-  `[modules: ...]`, `[capabilities: ...]`) let callers shape the generated DAG
-  without a harness-specific planner,
+- `planGoalDagFromObjective()` converts free-form objective text into exactly one
+  `GoalDagPlanNodeInput` fallback node,
+- `parseGoalDagFileContent()` and `planGoalDagFromFileDocument()` load explicit,
+  schema-shaped JSON DAG files for multi-node execution,
 - `createGoalDagNodes()` normalizes proposed DAG node inputs into durable node
   records,
 - `assertValidGoalDag()` / `validateGoalDag()` reject duplicate nodes, missing
@@ -177,9 +175,11 @@ The Pi bridge registers these commands and model-visible tools:
 | Command / tool | Purpose |
 | --- | --- |
 | `/goal` | Show the current/default goal status, DAG/subagent summary, elapsed time, token usage/budget, turn count, and useful subcommands. |
-| `/goal <objective>` | Start a long-running orchestrated goal. The controller plans the objective into a DAG, allocates native Git worktrees, launches ready Pi subagents, supervises them, and validates completion. If no workspace is supplied, `/goal` auto-allocates a controller worktree/branch from the current Git repository. |
-| `/goal --workspace <path> --branch <branch> <objective>` | Start an orchestrated goal in an explicit Git workspace/branch. |
-| `/goal --workspace <path> --ref <ref> <objective>` | Start an orchestrated goal in an explicit Git workspace/ref. |
+| `/goal <objective>` | Start a long-running orchestrated goal with one execution node. If no workspace is supplied, `/goal` auto-allocates a controller worktree/branch from the current Git repository. |
+| `/goal --dag <path>` | Start a long-running orchestrated goal from a JSON DAG file. See `docs/goal-dag-format.md`. |
+| `/goal --workspace <path> --branch <branch> <objective>` | Start a single-node orchestrated goal in an explicit Git workspace/branch. |
+| `/goal --workspace <path> --branch <branch> --dag <path>` | Start a file-based DAG goal in an explicit Git workspace/branch. |
+| `/goal --workspace <path> --ref <ref> <objective>` | Start a single-node orchestrated goal in an explicit Git workspace/ref. |
 | `/goal --tokens <budget> <objective>` | Start an orchestrated goal with a token budget, for example `100k` or `1.5m`. |
 | `/goal list` | List recent materialized goals and open the selected goal in the read-only monitor. |
 | `/goal status [goal-ref]` | Show status, metadata, DAG nodes, subagents, and validation summaries for the selected/default goal. |
@@ -195,7 +195,7 @@ The Pi bridge registers these commands and model-visible tools:
 
 It deliberately does **not** register `goal_complete`, `pause_goal`, or `abort_goal`; completion remains `update_goal({"status":"complete"})`.
 
-`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New Pi goals are always orchestrated. The controller can either use the supplied Git workspace or auto-allocate a native Git controller worktree/branch when workspace/branch/ref are omitted, then create subagent worktrees/branches under `.worktrees/`. Controller startup reports planned/started counts to the caller but does not send an initial model prompt to the controller session; token-consuming turns begin with subagent work or later controller validation/decision prompts. Explicit Git workspaces require a matching `--branch` or `--ref`. The adapter validates configured workspaces with read-only filesystem/git inspection and refuses missing, inaccessible, non-git, branch/ref-mismatched, or host-policy-disallowed bindings. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces. Set `AGENT_GOAL_PI_CONTROLLER_POLL_MS=0` to disable polling, and set `AGENT_GOAL_PI_RUN_VALIDATORS=1` to let controller validation execute shell validators instead of only checking expected outputs and recording skipped validators.
+`/goal --tokens <budget> ...` accepts positive numbers with optional `k` or `m` suffixes, for example `100k` or `1.5m`. New Pi goals are always orchestrated. Free-form objectives produce one execution node; multi-node DAGs require `/goal --dag <path>` with a JSON file matching `schemas/goal-dag.schema.json`. The controller can either use the supplied Git workspace or auto-allocate a native Git controller worktree/branch when workspace/branch/ref are omitted, then create subagent worktrees/branches under `.worktrees/`. Controller startup reports planned/started counts to the caller but does not send an initial model prompt to the controller session; token-consuming turns begin with subagent work or later controller validation/decision prompts. Explicit Git workspaces require a matching `--branch` or `--ref`. The adapter validates configured workspaces with read-only filesystem/git inspection and refuses missing, inaccessible, non-git, branch/ref-mismatched, or host-policy-disallowed bindings. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated list of allowed roots (semicolon-separated on Windows) to restrict eligible execution workspaces. Set `AGENT_GOAL_PI_CONTROLLER_POLL_MS=0` to disable polling, and set `AGENT_GOAL_PI_RUN_VALIDATORS=1` to let controller validation execute shell validators instead of only checking expected outputs and recording skipped validators.
 
 Bare `/goal` shows the current/default goal's objective, status, elapsed time, token usage/budget, goal-turn count, and currently useful subcommands. `/goal status` groups the objective, workspace, session, DAG summary, DAG nodes, and subagent records into readable sections with shortened ids/paths, and reports stalled DAGs when an otherwise active goal has only terminal failed/blocked nodes. `/goal monitor` opens a live dashboard that refreshes DAG and subagent state every second, showing node/subagent status counts, runtime duration, last activity age, branch/workspace, validation, notes, and transcript tail. `/goal list` lists recent materialized goals from the portable registry. Selecting a goal opens the same read-only monitor and keeps lifecycle actions as explicit buttons/commands rather than free-form input into the goal session. Targeted commands resolve full or short goal ids and reject ambiguous prefixes; when the goal-ref is omitted, commands prefer the current controller session's goal, then the latest non-terminal goal, then the latest goal. The Pi status line uses compact status strings such as `🎯 active 18k/100k`, `🎯 paused`, `🎯 blocked`, `🎯 budget 100k/100k`, or `🎯 complete`.
 

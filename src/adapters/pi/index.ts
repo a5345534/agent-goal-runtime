@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -10,11 +11,14 @@ import {
   createControllerValidationRunner,
   createNativeGitSubagentWorkspaceAllocator,
   parseGoalCommand,
+  parseGoalDagFileContent,
+  parseTokenBudget,
   renderActiveGoalReminderPrompt,
   type BlockedAuditEvidence,
   type CompletionAuditRequest,
   type CompletionAuditResult,
   type GoalDecisionEvidence,
+  type GoalDagFileDocument,
   type GoalRecord,
   type GoalSummary,
   type HiddenGoalTurnRequest,
@@ -114,6 +118,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
         "--workspace",
         "--branch",
         "--ref",
+        "--dag",
         "list",
         "status",
         "monitor",
@@ -357,7 +362,11 @@ async function handlePiGoalCommand(
   }
 
   const workspaceFlags = parseGoalWorkspaceFlags(trimmed);
-  const command = parseGoalCommand(workspaceFlags.remainingArgs);
+  const dagSourceFile = workspaceFlags.dagFile ? path.resolve(ctx.cwd, workspaceFlags.dagFile) : undefined;
+  const dagDocument = dagSourceFile ? parseGoalDagFileContent(fs.readFileSync(dagSourceFile, "utf8")) : undefined;
+  const command = dagDocument
+    ? { kind: "start" as const, objective: dagDocument.objective, tokenBudget: parseDagStartTokenBudget(workspaceFlags.remainingArgs) }
+    : parseGoalCommand(workspaceFlags.remainingArgs);
 
   if (command.kind !== "start") {
     throw new Error(`/goal ${command.kind} requires the explicit command form with optional goal-ref.`);
@@ -369,7 +378,14 @@ async function handlePiGoalCommand(
   const validation = validateExecutionWorkspace(binding);
   if (!validation.ok) throw new Error(validation.message ?? "execution workspace validation failed");
   if (!validation.isGit) throw new Error("/goal orchestration requires a git workspace");
-  await startGoalOwnedPiSession(runtime, ctx, command, binding, validation, backgroundGoalSessions);
+  await startGoalOwnedPiSession(runtime, ctx, command, binding, validation, backgroundGoalSessions, { dagDocument, dagSourceFile });
+}
+
+function parseDagStartTokenBudget(args: string): number | undefined {
+  const tokens = tokenize(args);
+  if (tokens.length === 0) return undefined;
+  if (tokens.length === 2 && tokens[0] === "--tokens") return parseTokenBudget(tokens[1] ?? "");
+  throw new Error("/goal --dag accepts only --tokens as an additional start flag; objective must come from the DAG file");
 }
 
 function allocatePiControllerWorkspace(
@@ -393,6 +409,7 @@ async function startGoalOwnedPiSession(
   binding: ResolvedWorkspaceBinding,
   validation: WorkspaceValidationResult,
   backgroundGoalSessions: Map<string, BackgroundGoalSessionHandle>,
+  options: { dagDocument?: GoalDagFileDocument; dagSourceFile?: string } = {},
 ): Promise<void> {
   const originSessionKey = resolveSessionKey(ctx);
   const labelObjective = command.objective.length <= 64 ? command.objective : `${command.objective.slice(0, 61)}...`;
@@ -427,9 +444,16 @@ async function startGoalOwnedPiSession(
       updatedAt: new Date().toISOString(),
     });
     backgroundGoalSessions.set(created.goal.goalId, background);
+    if (options.dagDocument) {
+      await runtime.planGoalDagFromFileDocument(created.goal.goalId, options.dagDocument, {
+        defaultWorkspaceStrategy: "native-git-worktree",
+        defaultCompletionGates: ["controller-validation"],
+      });
+    }
     const orchestration = await runPiGoalControllerLoopForGoal(runtime, ctx, created.goal, binding);
+    const dagSource = options.dagSourceFile ? ` DAG: ${shortenPath(options.dagSourceFile)}.` : "";
     ctx.ui.notify(
-      `Goal-owned controller session started (${shortGoalId}) and planned ${orchestration.plannedNodeCount} DAG node(s); started ${orchestration.startedSubagentCount} subagent(s). Workspace: ${binding.workspace}${formatWorkspaceValidationSuffix(validation)}. Use /goal monitor ${shortGoalId} or /goal list to inspect it.`,
+      `Goal-owned controller session started (${shortGoalId}) and planned ${orchestration.plannedNodeCount} DAG node(s); started ${orchestration.startedSubagentCount} subagent(s).${dagSource} Workspace: ${binding.workspace}${formatWorkspaceValidationSuffix(validation)}. Use /goal monitor ${shortGoalId} or /goal list to inspect it.`,
       "info",
     );
   } catch (error) {

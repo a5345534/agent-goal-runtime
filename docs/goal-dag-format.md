@@ -1,180 +1,212 @@
-# Goal DAG objective format
+# Goal DAG file format
 
-`/goal <objective>` supports an explicit, deterministic DAG format embedded in the objective text. The runtime does **not** infer a multi-node plan from prose. If no explicit task lines are found, the objective becomes one execution node.
+`/goal` uses a dedicated JSON DAG file for multi-node execution. The runtime no longer parses markdown task lists or headings from free-form objective text.
 
-Use this format when you want predictable DAG execution, subagent assignment, dependencies, outputs, and validators.
+- Use `/goal <objective>` for a single execution node.
+- Use `/goal --dag <path>` for an explicit multi-node DAG.
 
-## Quick example
+The JSON schema lives at [`schemas/goal-dag.schema.json`](../schemas/goal-dag.schema.json).
 
-```text
-/goal Implement People Frappe payroll:
-- [id: propose-payroll] Create OpenSpec change for payroll DocTypes [outputs: openspec/changes/implement-people-payroll-doctypes/tasks.md]
-- [id: payroll-doctypes] Add payroll DocType skeletons [after: propose-payroll] [files: projects/backend/module/people-frappe-module/beyourself_people/payroll]
-- [id: payroll-tests] Add payroll contract tests [after: payroll-doctypes] [validators: python3 -m unittest discover projects/backend/module/people-frappe-module/tests]
-- [id: archive] Archive the OpenSpec change after merge [after: payroll-tests]
-```
-
-This produces four DAG nodes. By default, task lists are sequential, so `payroll-doctypes` would also depend on `propose-payroll` even without `[after: propose-payroll]`. The explicit dependency is still recommended for readability.
-
-## What counts as a DAG node
-
-The deterministic planner creates one node for each matching line:
+## Command
 
 ```text
-- bullet task
-* bullet task
-+ bullet task
-- [ ] markdown checkbox task
-- [x] completed-looking checkbox task
-1. numbered task
-1) numbered task
-## heading task
-### heading task
-###### heading task
+/goal --dag .goal/people-frappe-backend.dag.json
 ```
 
-Other prose lines are retained in the overall objective but do not become nodes.
-
-If the objective contains **no** matching task lines or headings, the planner creates one fallback node for the whole objective.
-
-## Node id and slug
-
-Each node has a normalized id/slug:
-
-1. If `[id: ...]` is present, the id is based on that value.
-2. Otherwise, the id is based on the task text after removing annotations.
-
-Normalization:
-
-- lower-case
-- non-`a-z0-9` characters become `-`
-- repeated `-` collapse
-- leading/trailing `-` are removed
-
-Examples:
+Optional flags:
 
 ```text
-- [id: Payroll DocTypes] Add payroll DocTypes
+/goal --workspace <path> --branch <branch> --dag <path>
+/goal --workspace <path> --ref <ref> --dag <path>
+/goal --tokens 500k --dag <path>
 ```
 
-becomes:
+When `--dag` is supplied:
 
-```text
-payroll-doctypes
+- the goal objective comes from the file's `objective`
+- the DAG nodes come from the file's `nodes`
+- no additional objective text is accepted on the command line
+- the file is read relative to the current Pi working directory unless an absolute path is supplied
+
+## Minimal file
+
+```json
+{
+  "version": 1,
+  "objective": "Complete People Frappe backend remaining slices",
+  "nodes": [
+    {
+      "id": "attendance-parity",
+      "objective": "Add attendance parity fixtures"
+    },
+    {
+      "id": "payroll-doctypes",
+      "objective": "Add payroll DocTypes"
+    },
+    {
+      "id": "integration-validation",
+      "objective": "Run integrated validation",
+      "after": ["attendance-parity", "payroll-doctypes"]
+    }
+  ]
+}
 ```
 
-```text
-- Add payroll DocTypes
+Nodes with no `after` dependencies are immediately schedulable, subject to controller concurrency and conflict rules. There is **no inferred sequential dependency** in DAG files.
+
+## Full example
+
+```json
+{
+  "version": 1,
+  "objective": "Complete People Frappe backend remaining slices without moving production ownership before parity/cutover gates.",
+  "defaults": {
+    "workspaceStrategy": "native-git-worktree",
+    "completionGates": ["controller-validation"],
+    "validators": [
+      "python3 -m unittest discover projects/backend/module/people-frappe-module/tests"
+    ],
+    "conflicts": {
+      "modules": ["people-frappe-module"]
+    }
+  },
+  "nodes": [
+    {
+      "id": "attendance-parity",
+      "objective": "Create an OpenSpec change and add attendance parity fixtures for People Frappe.",
+      "outputs": [
+        "openspec/changes/implement-people-attendance-parity/tasks.md",
+        "projects/backend/module/people-frappe-module/tests/test_attendance_parity.py"
+      ],
+      "conflicts": {
+        "files": [
+          "projects/backend/module/people-frappe-module/beyourself_people/attendance"
+        ],
+        "capabilities": ["attendance"]
+      }
+    },
+    {
+      "id": "payroll-doctypes",
+      "objective": "Create an OpenSpec change and add People Payroll DocType skeletons.",
+      "outputs": [
+        "openspec/changes/implement-people-payroll-doctypes/tasks.md"
+      ],
+      "conflicts": {
+        "files": [
+          "projects/backend/module/people-frappe-module/beyourself_people/payroll"
+        ],
+        "capabilities": ["payroll"]
+      }
+    },
+    {
+      "id": "people-event-bridge",
+      "objective": "Define the narrow Java people-event-bridge and its canonical event publication contract.",
+      "conflicts": {
+        "modules": ["people-event-bridge"],
+        "capabilities": ["integration"]
+      }
+    },
+    {
+      "id": "integration-validation",
+      "objective": "Run integrated validation and archive completed OpenSpec changes.",
+      "after": [
+        "attendance-parity",
+        "payroll-doctypes",
+        "people-event-bridge"
+      ],
+      "validators": [
+        "python3 -m unittest discover projects/backend/module/people-frappe-module/tests",
+        "openspec validate people-frappe-backend --strict"
+      ]
+    }
+  ]
+}
 ```
 
-becomes:
+## Root fields
 
-```text
-add-payroll-doctypes
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `version` | yes | `1` | File format version. Only `1` is accepted. |
+| `objective` | yes | non-empty string | The goal objective shown in status/monitor and used for the controller session. |
+| `defaults` | no | object | Defaults copied to nodes that do not override them. |
+| `nodes` | yes | non-empty array | Explicit DAG nodes. Default maximum is 20 nodes. |
+
+## Node fields
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `id` | yes | kebab-case string | Stable node id and slug. Must match `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`. |
+| `objective` | yes | non-empty string | Work assigned to the subagent for this node. |
+| `after` | no | array of node ids | Dependencies that must be `complete` before this node can run. |
+| `outputs` | no | string array | Expected files/directories checked by controller validation. |
+| `validators` | no | string array | Shell validators for controller validation. |
+| `conflicts` | no | object | File/module/capability conflict hints for scheduler serialization. |
+| `scope` | no | string | Human-readable scope label. |
+| `workspaceStrategy` | no | string | Workspace allocation strategy. Defaults to native Git worktree in Pi. |
+| `risk` | no | `low` / `medium` / `high` | Risk label for future scheduling/review policy. |
+| `completionGates` | no | string array | Completion gates. Defaults to `controller-validation`. |
+
+## Defaults
+
+`defaults` supports:
+
+```json
+{
+  "outputs": ["path"],
+  "validators": ["command"],
+  "workspaceStrategy": "native-git-worktree",
+  "completionGates": ["controller-validation"],
+  "conflicts": {
+    "files": ["path"],
+    "modules": ["module"],
+    "capabilities": ["capability"]
+  }
+}
 ```
 
-Prefer explicit `[id: kebab-case]` for stable dependencies.
+A node-level field overrides the corresponding default. For example, if `defaults.validators` is set and a node also has `validators`, only the node's validators are used for that node.
 
-## Dependency semantics
+## Conflict hints
 
-Default task-list dependency mode is **sequential**:
+Conflict hints help the scheduler avoid running overlapping nodes together when concurrency is greater than one:
 
-```text
-- [id: a] A
-- [id: b] B
-- [id: c] C
+```json
+{
+  "conflicts": {
+    "files": ["projects/backend/module/people-frappe-module/beyourself_people/payroll"],
+    "modules": ["people-frappe-module"],
+    "capabilities": ["payroll"]
+  }
+}
 ```
 
-means:
+Supported conflict fields:
 
-```text
-a -> b -> c
-```
+- `files`
+- `modules`
+- `capabilities`
 
-Use `[parallel]` or `[independent]` to opt a node out of the inferred dependency on the previous node:
+## Validation rules
 
-```text
-- [id: docs] Update docs
-- [id: tests] Add tests [parallel]
-```
+The runtime rejects invalid DAG files before starting work:
 
-Use explicit dependencies with `[after: ...]`:
+- malformed JSON
+- missing or unsupported `version`
+- missing root `objective`
+- empty `nodes`
+- node ids that are not kebab-case
+- duplicate node ids
+- missing dependencies
+- self-dependencies
+- cycles, via the normal DAG validation step
+- non-array `after`, `outputs`, `validators`, or conflict lists
+- invalid `risk`
+- too many nodes (default max: 20)
 
-```text
-- [id: schema] Add schema
-- [id: api] Add API [after: schema]
-- [id: docs] Update docs [after: schema]
-```
+## Validator execution
 
-Dependency aliases:
-
-```text
-[after: node-id]
-[dep: node-id]
-[depends: node-id]
-[dependencies: node-id]
-```
-
-Multiple dependencies can be separated by comma or pipe:
-
-```text
-- [id: archive] Archive [after: tests, docs]
-- [id: archive] Archive [after: tests | docs]
-```
-
-Dependency values are normalized the same way as ids, so `[after: Payroll DocTypes]` refers to `payroll-doctypes`.
-
-Important: when explicit dependencies are present, they replace the inferred sequential dependency for that node.
-
-## Outputs
-
-Expected outputs declare files or directories the controller should validate after a subagent self-reports completion:
-
-```text
-- [id: tests] Add tests [outputs: projects/backend/module/people-frappe-module/tests/test_payroll_doctypes.py]
-```
-
-Aliases:
-
-```text
-[outputs: path]
-[output: path]
-[expected-output: path]
-[expected-outputs: path]
-```
-
-Multiple outputs use comma or pipe:
-
-```text
-[outputs: file-a.py, file-b.py]
-[outputs: file-a.py | file-b.py]
-```
-
-## Validators
-
-Validators declare shell commands for controller validation:
-
-```text
-- [id: tests] Run tests [validators: npm run check]
-```
-
-Aliases:
-
-```text
-[validators: command]
-[validator: command]
-[checks: command]
-[check: command]
-```
-
-Multiple validators use comma or pipe:
-
-```text
-[validators: npm run check, npm run lint]
-[validators: npm run check | npm run lint]
-```
-
-Pi executes validators only when validator execution is explicitly enabled:
+Validators are recorded in the DAG by default. Pi executes validators only when validator execution is explicitly enabled:
 
 ```bash
 AGENT_GOAL_PI_RUN_VALIDATORS=1
@@ -182,65 +214,20 @@ AGENT_GOAL_PI_RUN_VALIDATORS=1
 PI_GOAL_RUN_VALIDATORS=1
 ```
 
-When validator execution is disabled, validators are recorded as skipped controller checks rather than run in the shell.
+When disabled, validators are reported as skipped controller checks rather than run in the shell.
 
-## Conflict hints
+## Text objective behavior
 
-Conflict hints help the scheduler avoid running overlapping nodes together when concurrency is greater than one:
-
-```text
-- [id: payroll] Add payroll DocTypes [files: projects/backend/module/people-frappe-module/beyourself_people/payroll]
-- [id: reg-lsa] Add LSA importer [modules: people-frappe-module] [capabilities: regulatory-lsa]
-```
-
-Supported hints:
+Text objectives no longer define DAG nodes. This input:
 
 ```text
-[files: path-a, path-b]
-[file: path]
-[modules: module-a]
-[module: module-a]
-[capabilities: capability-a]
-[capability: capability-a]
+/goal Implement feature:
+- [id: a] A
+- [id: b] B [after: a]
 ```
 
-Multiple values use comma or pipe.
-
-## Supported annotation summary
-
-| Annotation | Aliases | Meaning |
-| --- | --- | --- |
-| `[id: value]` | none | Stable node id/slug. |
-| `[after: value]` | `dep`, `depends`, `dependencies` | Explicit dependency node ids. |
-| `[parallel]` | `[independent]` | Opt out of inferred sequential dependency. |
-| `[outputs: value]` | `output`, `expected-output`, `expected-outputs` | Expected output paths. |
-| `[validators: value]` | `validator`, `checks`, `check` | Controller validator commands. |
-| `[files: value]` | `file` | File conflict hints. |
-| `[modules: value]` | `module` | Module conflict hints. |
-| `[capabilities: value]` | `capability` | Capability conflict hints. |
-
-## Limits and validation
-
-The planner validates the generated DAG before execution:
-
-- duplicate node ids are rejected
-- missing dependencies are rejected
-- self-dependencies are rejected
-- cycles are rejected
-- the deterministic objective planner emits at most 20 nodes by default
-
-For large goals, split into fewer high-level nodes and let each node own a coherent slice.
-
-## Recommended style
-
-Use explicit ids and dependencies for durable, reviewable plans:
+creates **one** execution node containing the whole objective text. To create multiple nodes, place the DAG in a JSON file and run:
 
 ```text
-/goal Complete People Frappe backend remaining slices:
-- [id: attendance-parity] Add attendance parity fixtures [outputs: projects/backend/module/people-frappe-module/tests/test_attendance_parity.py]
-- [id: payroll-doctypes] Add payroll DocTypes [parallel] [files: projects/backend/module/people-frappe-module/beyourself_people/payroll]
-- [id: people-event-bridge] Add narrow people event bridge OpenSpec [parallel] [modules: people-event-bridge]
-- [id: integration-validation] Run integrated validation [after: attendance-parity, payroll-doctypes, people-event-bridge] [validators: python3 -m unittest discover projects/backend/module/people-frappe-module/tests]
+/goal --dag path/to/goal.dag.json
 ```
-
-Use prose before or after the task list for global constraints. Prose does not create nodes, but it remains part of the goal objective and is included in subagent prompts.

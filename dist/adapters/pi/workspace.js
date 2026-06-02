@@ -7,6 +7,7 @@ export function parseGoalWorkspaceFlags(args) {
     let workspace;
     let branch;
     let ref;
+    let dagFile;
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
         if (token === "--workspace") {
@@ -21,6 +22,10 @@ export function parseGoalWorkspaceFlags(args) {
             ref = requireFlagValue(tokens, ++index, "--ref");
             continue;
         }
+        if (token === "--dag") {
+            dagFile = requireFlagValue(tokens, ++index, "--dag");
+            continue;
+        }
         if (token === "--legacy-session")
             throw new Error("--legacy-session was removed; /goal always creates an orchestrated goal-owned session.");
         if (token === "--orchestrate")
@@ -29,7 +34,7 @@ export function parseGoalWorkspaceFlags(args) {
     }
     if (branch && ref)
         throw new Error("only one of --branch or --ref may be supplied");
-    return { workspace, branch, ref, remainingArgs: remaining.join(" ") };
+    return { workspace, branch, ref, dagFile, remainingArgs: remaining.join(" ") };
 }
 export function resolveWorkspaceBinding(flags, cwd) {
     if (!flags.workspace)

@@ -140,6 +140,93 @@ test("Pi orchestrated goal start plans DAG and launches a subagent worktree", as
         rmSync(workspace, { recursive: true, force: true });
     }
 });
+test("Pi goal start can load an explicit DAG file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-dag-file-session-"));
+    const workspace = createGitWorkspace();
+    const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
+    process.env.AGENT_GOAL_STATE_HOME = dir;
+    let commandHandler;
+    const prompts = [];
+    const launched = [];
+    const mirrored = [];
+    const dagFile = join(workspace, "goal.dag.json");
+    writeFileSync(dagFile, JSON.stringify({
+        version: 1,
+        objective: "Run file DAG",
+        nodes: [
+            { id: "first-node", objective: "Do first", outputs: ["first.txt"] },
+            { id: "second-node", objective: "Do second", after: ["first-node"] },
+        ],
+    }));
+    setPiBackgroundGoalSessionLauncherForTests(async (request) => {
+        launched.push(request);
+        return {
+            sessionFile: request.sessionFile ?? join(dir, `dag-session-${launched.length}.jsonl`),
+            sessionId: request.sessionId ?? `dag-session-${launched.length}`,
+            setSessionName: async () => undefined,
+            sendPrompt: async (prompt) => {
+                prompts.push(prompt);
+            },
+            stop: () => undefined,
+        };
+    });
+    const pi = {
+        registerTool() { },
+        registerCommand(_name, options) {
+            commandHandler = options.handler;
+        },
+        on() { },
+        appendEntry(_type, data) {
+            mirrored.push(data);
+        },
+        sendMessage() { },
+    };
+    const notifications = [];
+    const controllerCtx = {
+        hasUI: true,
+        cwd: workspace,
+        model: { provider: "test", id: "model" },
+        ui: {
+            notify(message) {
+                notifications.push(message);
+            },
+            setStatus() { },
+            setWidget() { },
+            confirm: async () => true,
+            editor: async () => undefined,
+            select: async () => undefined,
+            custom: async () => undefined,
+        },
+        sessionManager: {
+            getSessionFile: () => "/controller/session.jsonl",
+            getSessionName: () => "controller",
+        },
+        isIdle: () => true,
+        hasPendingMessages: () => false,
+    };
+    try {
+        goalPiExtension(pi);
+        assert.ok(commandHandler);
+        await commandHandler?.("--dag goal.dag.json", controllerCtx);
+        assert.equal(launched.length, 2);
+        assert.equal(prompts.length, 1);
+        assert.match(prompts[0] ?? "", /Do first/);
+        assert.doesNotMatch(prompts[0] ?? "", /Do second/);
+        assert.match(notifications.at(-1) ?? "", /planned 2 DAG node\(s\); started 1 subagent\(s\)/);
+        assert.match(notifications.at(-1) ?? "", /DAG:/);
+        const dagNodes = mirrored.filter((entry) => entry.kind === "goal_dag_node");
+        assert.equal(dagNodes.length, 3);
+    }
+    finally {
+        setPiBackgroundGoalSessionLauncherForTests();
+        if (previousStateHome === undefined)
+            delete process.env.AGENT_GOAL_STATE_HOME;
+        else
+            process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(workspace, { recursive: true, force: true });
+    }
+});
 test("Pi orchestrated goal start can auto-allocate a controller worktree", async () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-orchestrated-auto-"));
     const workspace = createGitWorkspace();

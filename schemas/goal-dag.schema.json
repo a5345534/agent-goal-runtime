@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/a5345534/agent-goal-runtime/schemas/goal-dag.schema.json",
+  "title": "Agent Goal DAG",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "objective", "nodes"],
+  "properties": {
+    "version": { "const": 1 },
+    "objective": { "type": "string", "minLength": 1 },
+    "defaults": { "$ref": "#/$defs/defaults" },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "kebabId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "conflicts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": { "$ref": "#/$defs/stringList" },
+        "modules": { "$ref": "#/$defs/stringList" },
+        "capabilities": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outputs": { "$ref": "#/$defs/stringList" },
+        "validators": { "$ref": "#/$defs/stringList" },
+        "workspaceStrategy": { "type": "string", "minLength": 1 },
+        "completionGates": { "$ref": "#/$defs/stringList" },
+        "conflicts": { "$ref": "#/$defs/conflicts" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "objective"],
+      "properties": {
+        "id": { "$ref": "#/$defs/kebabId" },
+        "objective": { "type": "string", "minLength": 1 },
+        "after": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/kebabId" }
+        },
+        "outputs": { "$ref": "#/$defs/stringList" },
+        "validators": { "$ref": "#/$defs/stringList" },
+        "conflicts": { "$ref": "#/$defs/conflicts" },
+        "scope": { "type": "string", "minLength": 1 },
+        "workspaceStrategy": { "type": "string", "minLength": 1 },
+        "risk": { "enum": ["low", "medium", "high"] },
+        "completionGates": { "$ref": "#/$defs/stringList" }
+      }
+    }
+  }
+}
