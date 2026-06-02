@@ -20,10 +20,12 @@ This project provides the common framework first:
 
 Other agent harness bridges are intentionally out of scope for this first implementation and should be added through separate changes.
 
-The current orchestration-state slice records DAG nodes and subagent registry
-records through the portable store/runtime APIs. It does not yet schedule nodes,
-spawn harness-neutral subagents, allocate Git controller worktrees, or validate
-subagent self-reports; those are follow-up slices.
+The current orchestration-state slices record DAG nodes and subagent registry
+records through the portable store/runtime APIs and provide a default native Git
+workspace manager that can allocate dedicated controller worktrees/branches when
+workspace and branch are omitted. They do not yet schedule DAG nodes, spawn
+harness-neutral subagents, or validate subagent self-reports; those are follow-up
+slices.
 
 ## Build and test
 
@@ -43,6 +45,21 @@ node dist/cli.js --state-root /tmp/agent-goal-smoke clear
 ```
 
 The CLI is only a debug/smoke surface. Full Codex-compatible auto-continuation requires a harness adapter.
+
+## Native Git workspace manager
+
+The portable core exports `NativeGitWorkspaceManager` for harnesses that want the
+default Git-backed workspace strategy. It can:
+
+- find the enclosing Git repository from an invocation directory,
+- resolve a base ref from explicit options, configured defaults, remote default
+  branch, current branch, or HEAD,
+- create a unique controller worktree and branch under `.worktrees/`,
+- record an allocation shape suitable for goal state metadata,
+- and clean up generated worktrees/branches when a host policy allows it.
+
+This manager uses only native `git` commands and does not require Pi, GitHub,
+OpenSpec, or project-local helper scripts.
 
 ## Pi bridge
 
