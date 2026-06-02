@@ -1,14 +1,12 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import type { BranchVerificationStatus, WorkspaceProfile, WorkspaceProfileKind, WorkspaceStatus } from "../../core/index.js";
+import type { BranchVerificationStatus, WorkspaceStatus } from "../../core/index.js";
 
 export interface GoalWorkspaceFlags {
   workspace?: string;
   branch?: string;
   ref?: string;
-  legacySession?: boolean;
-  orchestrate?: boolean;
   remainingArgs: string;
 }
 
@@ -32,20 +30,12 @@ export interface WorkspaceValidationResult {
   message?: string;
 }
 
-export type WorkspaceProfileCommand =
-  | { kind: "add"; profile: Omit<WorkspaceProfile, "createdAt" | "updatedAt"> }
-  | { kind: "list" }
-  | { kind: "show"; name: string }
-  | { kind: "remove"; name: string };
-
 export function parseGoalWorkspaceFlags(args: string): GoalWorkspaceFlags {
   const tokens = tokenize(args);
   const remaining: string[] = [];
   let workspace: string | undefined;
   let branch: string | undefined;
   let ref: string | undefined;
-  let legacySession = false;
-  let orchestrate = false;
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
@@ -61,79 +51,25 @@ export function parseGoalWorkspaceFlags(args: string): GoalWorkspaceFlags {
       ref = requireFlagValue(tokens, ++index, "--ref");
       continue;
     }
-    if (token === "--legacy-session") {
-      legacySession = true;
-      continue;
-    }
-    if (token === "--orchestrate") {
-      orchestrate = true;
-      continue;
-    }
+    if (token === "--legacy-session") throw new Error("--legacy-session was removed; /goal always creates an orchestrated goal-owned session.");
+    if (token === "--orchestrate") throw new Error("--orchestrate was removed; /goal <objective> orchestrates by default.");
     remaining.push(token);
   }
 
   if (branch && ref) throw new Error("only one of --branch or --ref may be supplied");
-  if (legacySession && (workspace || branch || ref)) throw new Error("--legacy-session cannot be combined with --workspace, --branch, or --ref");
-  if (legacySession && orchestrate) throw new Error("--orchestrate cannot be combined with --legacy-session");
-  const parsed: GoalWorkspaceFlags = { workspace, branch, ref, legacySession, remainingArgs: remaining.join(" ") };
-  if (orchestrate) parsed.orchestrate = true;
-  return parsed;
-}
-
-export function parseWorkspaceProfileCommand(args: string, cwd: string): WorkspaceProfileCommand | undefined {
-  const tokens = tokenize(args);
-  if (tokens[0] !== "workspace") return undefined;
-  const action = tokens[1];
-  if (action === "list") return { kind: "list" };
-  if ((action === "show" || action === "remove") && tokens[2]) return { kind: action, name: tokens[2] };
-  if (action !== "add" || !tokens[2]) throw new Error("usage: /goal workspace add <name> --path <path> [--branch <branch>|--ref <ref>]");
-
-  const name = tokens[2];
-  let path: string | undefined;
-  let branch: string | undefined;
-  let ref: string | undefined;
-  let kind: WorkspaceProfileKind = "git";
-
-  for (let index = 3; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token === "--path") {
-      path = resolve(cwd, requireFlagValue(tokens, ++index, "--path"));
-      continue;
-    }
-    if (token === "--branch") {
-      branch = requireFlagValue(tokens, ++index, "--branch");
-      continue;
-    }
-    if (token === "--ref") {
-      ref = requireFlagValue(tokens, ++index, "--ref");
-      continue;
-    }
-    if (token === "--non-git") {
-      kind = "nonGit";
-      continue;
-    }
-    throw new Error(`unknown workspace profile option: ${token}`);
-  }
-
-  if (!path) throw new Error("workspace profile requires --path");
-  if (branch && ref) throw new Error("workspace profile accepts only one of --branch or --ref");
-  if (kind === "git" && !branch && !ref) throw new Error("git workspace profile requires --branch or --ref");
-  if (kind === "nonGit" && (branch || ref)) throw new Error("non-git workspace profile must not set --branch or --ref");
-  return { kind: "add", profile: { name, path, kind, branch, ref } };
+  return { workspace, branch, ref, remainingArgs: remaining.join(" ") };
 }
 
 export function resolveWorkspaceBinding(
   flags: Pick<GoalWorkspaceFlags, "workspace" | "branch" | "ref">,
-  profiles: WorkspaceProfile[],
   cwd: string,
 ): ResolvedWorkspaceBinding {
-  if (!flags.workspace) throw new Error("/goal requires --workspace <path-or-profile> for goal-owned execution sessions");
-  const profile = profiles.find((candidate) => candidate.name === flags.workspace);
-  const workspace = profile ? profile.path : resolve(cwd, flags.workspace);
-  const branch = flags.branch ?? profile?.branch;
-  const ref = flags.ref ?? profile?.ref;
+  if (!flags.workspace) throw new Error("/goal requires --workspace <path> when an explicit workspace is supplied");
+  const workspace = resolve(cwd, flags.workspace);
+  const branch = flags.branch;
+  const ref = flags.ref;
   if (branch && ref) throw new Error("only one of --branch or --ref may be supplied");
-  return { workspace, branch, ref, profileName: profile?.name };
+  return { workspace, branch, ref };
 }
 
 export function validateExecutionWorkspace(binding: ResolvedWorkspaceBinding): WorkspaceValidationResult {
