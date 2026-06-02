@@ -114,6 +114,26 @@ test("subagent prompt and state sync keep controller-owned registry updates expl
   assert.equal(synced.lastActivityAt, "2026-06-02T00:01:00.000Z");
 });
 
+test("subagent sync clears stale integration errors after a healthy state read", async () => {
+  const { adapter } = fakeAdapter({ status: "idle", lastActivityAt: "2026-06-02T00:03:00.000Z" });
+  const stale: GoalSubagentRecord = {
+    goalId: "goal-1",
+    nodeId: "attendance",
+    subagentId: "subagent-1",
+    harnessAdapterId: "fake-harness",
+    status: "running",
+    prompts: ["initial"],
+    integrationStatus: "Pi subagent session file not found",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const synced = await syncGoalSubagentState(adapter, stale, { now: "2026-06-02T00:04:00.000Z" });
+
+  assert.equal(synced.status, "idle");
+  assert.equal(synced.integrationStatus, undefined);
+});
+
 test("runtime persists started and synced subagent records through the adapter contract", async () => {
   const { adapter } = fakeAdapter({ status: "idle", lastActivityAt: "2026-06-02T00:03:00.000Z" });
   const runtime = new GoalRuntime({ store: new MemoryGoalStore(), config: { now: () => new Date(now) } });

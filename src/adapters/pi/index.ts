@@ -8,6 +8,7 @@ import {
   GoalRuntime,
   NativeGitWorkspaceManager,
   SQLiteGoalStore,
+  cleanupTerminalSubagentWorkspaces,
   createControllerValidationRunner,
   createNativeGitSubagentWorkspaceAllocator,
   parseGoalCommand,
@@ -53,6 +54,7 @@ const MEANINGFUL_PROGRESS_TOOL_SET = new Set(["write", "edit", "bash", "read", "
 let backgroundGoalSessionLauncher: BackgroundGoalSessionLauncher = launchPiRpcBackgroundGoalSession;
 const backgroundGoalSessions = new Map<string, BackgroundGoalSessionHandle>();
 const piGoalControllerPollers = new Map<string, ReturnType<typeof setInterval>>();
+const piGoalControllerPollsInFlight = new Set<string>();
 
 export type { BackgroundGoalSessionHandle, BackgroundGoalSessionLauncher, BackgroundGoalSessionLaunchRequest } from "./background-session.js";
 export { PiHarnessSubagentAdapter, createPiHarnessSubagentAdapter, readPiSubagentSessionState, renderPiSubagentInitialPrompt } from "./subagent-adapter.js";
@@ -134,6 +136,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       lastCtx = ctx;
       try {
+        await resumePiGoalControllerPollingLoops(runtime, ctx);
         await handlePiGoalCommand(runtime, ctx, args, backgroundGoalSessions);
       } catch (error) {
         safeNotify(lastCtx ?? ctx, error instanceof Error ? error.message : String(error), "error");
@@ -201,6 +204,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     lastCtx = ctx;
     const sessionKey = resolveSessionKey(ctx);
     await runtime.sessionResumed(sessionKey);
+    await resumePiGoalControllerPollingLoops(runtime, ctx);
     const result = await runtime.getGoal(sessionKey);
     if (result.goal) showGoalStatus(ctx, result.goal);
   });
@@ -486,7 +490,7 @@ async function runPiGoalControllerLoopForGoal(
 
 function buildPiGoalControllerLoopOptions(
   ctx: ExtensionContext | ExtensionCommandContext,
-  goal: GoalRecord,
+  goal: Pick<GoalRecord, "goalId">,
   binding: ResolvedWorkspaceBinding,
 ): Parameters<GoalRuntime["runGoalControllerLoop"]>[1] {
   const workspaceManager = new NativeGitWorkspaceManager({ defaultBaseRef: binding.branch ?? binding.ref, fetch: false });
@@ -509,7 +513,7 @@ function buildPiGoalControllerLoopOptions(
 function startPiGoalControllerPollingLoop(
   runtime: GoalRuntime,
   ctx: ExtensionContext | ExtensionCommandContext,
-  goal: GoalRecord,
+  goal: Pick<GoalRecord, "goalId">,
   binding: ResolvedWorkspaceBinding,
 ): void {
   const pollMs = readPiGoalControllerPollMs();
@@ -526,21 +530,68 @@ function startPiGoalControllerPollingLoop(
 async function runPiGoalControllerPoll(
   runtime: GoalRuntime,
   ctx: ExtensionContext | ExtensionCommandContext,
-  goal: GoalRecord,
+  goal: Pick<GoalRecord, "goalId">,
   binding: ResolvedWorkspaceBinding,
 ): Promise<void> {
-  if (await shouldStopPiGoalControllerPolling(runtime, goal.goalId)) {
-    stopPiGoalControllerPollingLoop(goal.goalId);
-    return;
+  if (piGoalControllerPollsInFlight.has(goal.goalId)) return;
+  piGoalControllerPollsInFlight.add(goal.goalId);
+  try {
+    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId)) {
+      stopPiGoalControllerPollingLoop(goal.goalId);
+      return;
+    }
+    await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding));
+    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId)) stopPiGoalControllerPollingLoop(goal.goalId);
+  } finally {
+    piGoalControllerPollsInFlight.delete(goal.goalId);
   }
-  await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding));
-  if (await shouldStopPiGoalControllerPolling(runtime, goal.goalId)) stopPiGoalControllerPollingLoop(goal.goalId);
 }
 
-async function shouldStopPiGoalControllerPolling(runtime: GoalRuntime, goalId: string): Promise<boolean> {
-  const state = await runtime.getGoalOrchestrationState(goalId);
-  if (state.nodes.length === 0) return true;
-  return state.nodes.every((node) => ["complete", "blocked", "failed", "superseded"].includes(node.status));
+async function finalizeAndCleanupPiGoalIfDagTerminal(
+  runtime: GoalRuntime,
+  ctx: ExtensionContext | ExtensionCommandContext,
+  goalId: string,
+): Promise<boolean> {
+  const finalization = await runtime.finalizeGoalFromDagTerminalState(goalId);
+  if (!finalization.terminal) return false;
+
+  if (finalization.changed) {
+    const state = await runtime.getGoalOrchestrationState(goalId);
+    const cleanup = cleanupTerminalSubagentWorkspaces(new NativeGitWorkspaceManager({ fetch: false }), state);
+    const cleanupErrors = cleanup.filter((result) => result.action === "error");
+    if (cleanupErrors.length > 0) {
+      safeNotify(
+        ctx,
+        `Goal ${goalId.slice(0, 8)} completed but ${cleanupErrors.length} subagent workspace cleanup(s) failed: ${cleanupErrors.map((item) => item.error ?? item.subagentId).join("; ")}`,
+        "warning",
+      );
+    }
+    const handle = backgroundGoalSessions.get(goalId);
+    handle?.stop();
+    backgroundGoalSessions.delete(goalId);
+  }
+
+  return true;
+}
+
+async function resumePiGoalControllerPollingLoops(runtime: GoalRuntime, ctx: ExtensionContext | ExtensionCommandContext): Promise<void> {
+  if (readPiGoalControllerPollMs() <= 0) return;
+  const summaries = await runtime.listGoalSummaries();
+  for (const summary of summaries) {
+    if (summary.status !== "active") continue;
+    if (!summary.executionWorkspace) continue;
+    const state = await runtime.getGoalOrchestrationState(summary.goalId);
+    if (state.nodes.length === 0) continue;
+    const binding: ResolvedWorkspaceBinding = {
+      workspace: summary.executionWorkspace,
+      branch: summary.branch,
+      ref: summary.ref,
+    };
+    startPiGoalControllerPollingLoop(runtime, ctx, summary, binding);
+    void runPiGoalControllerPoll(runtime, ctx, summary, binding).catch((error: unknown) => {
+      safeNotify(ctx, error instanceof Error ? `Goal controller recovery poll failed: ${error.message}` : `Goal controller recovery poll failed: ${String(error)}`, "warning");
+    });
+  }
 }
 
 function stopPiGoalControllerPollingLoop(goalId: string): void {
@@ -553,6 +604,7 @@ function stopPiGoalControllerPollingLoop(goalId: string): void {
 function stopAllPiGoalControllerPollingLoops(): void {
   for (const timer of piGoalControllerPollers.values()) clearInterval(timer);
   piGoalControllerPollers.clear();
+  piGoalControllerPollsInFlight.clear();
 }
 
 function readPiGoalControllerPollMs(): number {

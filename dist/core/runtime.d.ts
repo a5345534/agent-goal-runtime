@@ -4,7 +4,15 @@ import { type GoalDagFileDocument, type GoalDagFilePlanOptions } from "./dag-fil
 import { type GoalDagPlanNodeInput, type GoalDagPlanOptions, type GoalDagReadyQueue, type GoalDagSchedulingPolicy } from "./dag-scheduler.js";
 import { type GoalCommand } from "./parser.js";
 import { type HarnessSubagentAdapter, type StartGoalSubagentOptions } from "./subagent-adapter.js";
-import type { BlockedAuditEvidence, GoalAdapterCallbacks, GoalDagNode, GoalLedgerEvent, GoalOrchestrationState, GoalReferenceResolution, GoalRuntimeConfig, GoalSessionMetadata, GoalStatusInput, GoalStore, GoalSubagentRecord, GoalSummary, GoalToolResult, WorkspaceProfile, GoalTurnStop, HiddenGoalTurnResult, TurnContext } from "./types.js";
+import type { BlockedAuditEvidence, GoalAdapterCallbacks, GoalDagNode, GoalLedgerEvent, GoalOrchestrationState, GoalRecord, GoalReferenceResolution, GoalRuntimeConfig, GoalSessionMetadata, GoalStatusInput, GoalStore, GoalSubagentRecord, GoalSummary, GoalToolResult, WorkspaceProfile, GoalTurnStop, HiddenGoalTurnResult, TurnContext } from "./types.js";
+export interface GoalDagTerminalFinalizationResult {
+    goalId: string;
+    terminal: boolean;
+    changed: boolean;
+    reason: string;
+    status?: GoalRecord["status"];
+    goal?: GoalRecord;
+}
 export declare class GoalRuntime {
     private readonly store;
     private readonly callbacks;
@@ -27,6 +35,8 @@ export declare class GoalRuntime {
     listLedgerEvents(sessionKey: string, goalId?: string): Promise<GoalLedgerEvent[]>;
     saveGoalSessionMetadata(metadata: GoalSessionMetadata): Promise<void>;
     listGoalSummaries(): Promise<GoalSummary[]>;
+    getGoalById(goalId: string): Promise<GoalRecord | undefined>;
+    finalizeGoalFromDagTerminalState(goalId: string): Promise<GoalDagTerminalFinalizationResult>;
     saveGoalDagNode(node: GoalDagNode): Promise<void>;
     getGoalDagNode(goalId: string, nodeId: string): Promise<GoalDagNode | undefined>;
     listGoalDagNodes(goalId: string): Promise<GoalDagNode[]>;

@@ -82,6 +82,65 @@ test("memory store persists durable goal DAG nodes and subagent registry records
   assert.deepEqual((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.prompts, ["Implement attendance doctypes"]);
 });
 
+test("runtime finalizes an active goal when all DAG nodes are complete", async () => {
+  let id = 0;
+  const runtime = new GoalRuntime({
+    store: new MemoryGoalStore(),
+    config: { now: () => new Date(now), randomId: () => (id++ === 0 ? "goal-finalize" : `event-${id}`) },
+  });
+  const created = await runtime.createOrReplaceGoal("session-1", "Complete People Frappe slice", { confirmReplace: false });
+  assert.equal(created.goal?.goalId, "goal-finalize");
+  await runtime.saveGoalDagNode(node({ goalId: "goal-finalize", status: "complete", lastValidationSummary: "controller validation passed" }));
+  await runtime.saveGoalSubagent(subagent({ goalId: "goal-finalize", status: "complete", selfReportedResult: "done" }));
+
+  const result = await runtime.finalizeGoalFromDagTerminalState("goal-finalize");
+
+  assert.equal(result.terminal, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.status, "complete");
+  assert.equal((await runtime.getGoal("session-1")).goal?.status, "complete");
+  const ledger = await runtime.listLedgerEvents("session-1", "goal-finalize");
+  assert.equal(ledger.at(-1)?.type, "goal_completed");
+  assert.equal(ledger.at(-1)?.details?.source, "controller_dag_terminal_state");
+});
+
+test("runtime marks an active goal blocked when terminal DAG nodes include failures", async () => {
+  let id = 0;
+  const runtime = new GoalRuntime({
+    store: new MemoryGoalStore(),
+    config: { now: () => new Date(now), randomId: () => (id++ === 0 ? "goal-blocked" : `blocked-event-${id}`) },
+  });
+  await runtime.createOrReplaceGoal("session-1", "Complete People Frappe slice", { confirmReplace: false });
+  await runtime.saveGoalDagNode(node({ goalId: "goal-blocked", status: "complete" }));
+  await runtime.saveGoalDagNode(node({ goalId: "goal-blocked", nodeId: "payroll", slug: "payroll", status: "failed" }));
+
+  const result = await runtime.finalizeGoalFromDagTerminalState("goal-blocked");
+
+  assert.equal(result.terminal, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.status, "blocked");
+  assert.equal((await runtime.getGoal("session-1")).goal?.status, "blocked");
+  const ledger = await runtime.listLedgerEvents("session-1", "goal-blocked");
+  assert.equal(ledger.at(-1)?.type, "goal_blocked");
+});
+
+test("runtime does not finalize a goal while any DAG node is non-terminal", async () => {
+  let id = 0;
+  const runtime = new GoalRuntime({
+    store: new MemoryGoalStore(),
+    config: { now: () => new Date(now), randomId: () => (id++ === 0 ? "goal-running" : `running-event-${id}`) },
+  });
+  await runtime.createOrReplaceGoal("session-1", "Complete People Frappe slice", { confirmReplace: false });
+  await runtime.saveGoalDagNode(node({ goalId: "goal-running", status: "running" }));
+
+  const result = await runtime.finalizeGoalFromDagTerminalState("goal-running");
+
+  assert.equal(result.terminal, false);
+  assert.equal(result.changed, false);
+  assert.match(result.reason, /non-terminal DAG nodes remain/);
+  assert.equal((await runtime.getGoal("session-1")).goal?.status, "active");
+});
+
 test("sqlite store persists orchestration state across reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "goal-orchestration-state-"));
   const dbPath = join(dir, "goals.sqlite");
