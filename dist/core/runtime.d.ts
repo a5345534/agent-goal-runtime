@@ -1,3 +1,4 @@
+import { type GoalControllerLoopOptions, type GoalControllerLoopResult, type GoalControllerTickOptions, type GoalControllerTickResult } from "./controller-loop.js";
 import { type GoalDagPlanNodeInput, type GoalDagPlanOptions, type GoalDagReadyQueue, type GoalDagSchedulingPolicy } from "./dag-scheduler.js";
 import { type GoalCommand } from "./parser.js";
 import { type HarnessSubagentAdapter, type StartGoalSubagentOptions } from "./subagent-adapter.js";
@@ -39,6 +40,8 @@ export declare class GoalRuntime {
         now?: Date | string;
     }): Promise<GoalSubagentRecord>;
     syncGoalSubagent(adapter: HarnessSubagentAdapter, subagent: GoalSubagentRecord): Promise<GoalSubagentRecord>;
+    runGoalControllerTick(goalId: string, options: GoalControllerTickOptions): Promise<GoalControllerTickResult>;
+    runGoalControllerLoop(goalId: string, options: GoalControllerLoopOptions): Promise<GoalControllerLoopResult>;
     resolveGoalReference(reference: string): Promise<GoalReferenceResolution>;
     saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void>;
     getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;

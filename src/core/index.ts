@@ -7,5 +7,6 @@ export * from "./sqlite-store.js";
 export * from "./prompts.js";
 export * from "./runtime.js";
 export * from "./git-workspace.js";
+export * from "./controller-loop.js";
 export * from "./dag-scheduler.js";
 export * from "./subagent-adapter.js";

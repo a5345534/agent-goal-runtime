@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
 import {
+  runGoalControllerLoop as runGoalControllerLoopCore,
+  runGoalControllerTick as runGoalControllerTickCore,
+  type GoalControllerLoopOptions,
+  type GoalControllerLoopResult,
+  type GoalControllerTickOptions,
+  type GoalControllerTickResult,
+} from "./controller-loop.js";
+import {
   createGoalDagNodes,
   getGoalDagReadyQueue as computeGoalDagReadyQueue,
   type GoalDagPlanNodeInput,
@@ -187,6 +195,14 @@ export class GoalRuntime {
     const updated = await syncGoalSubagentState(adapter, subagent, { now: this.config.now() });
     await this.store.saveGoalSubagent(updated);
     return updated;
+  }
+
+  async runGoalControllerTick(goalId: string, options: GoalControllerTickOptions): Promise<GoalControllerTickResult> {
+    return runGoalControllerTickCore(this, goalId, { now: this.config.now, ...options });
+  }
+
+  async runGoalControllerLoop(goalId: string, options: GoalControllerLoopOptions): Promise<GoalControllerLoopResult> {
+    return runGoalControllerLoopCore(this, goalId, { now: this.config.now, ...options });
   }
 
   async resolveGoalReference(reference: string): Promise<GoalReferenceResolution> {
