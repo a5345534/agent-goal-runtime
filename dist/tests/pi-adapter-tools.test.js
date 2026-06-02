@@ -1,9 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import goalPiExtension, { setPiBackgroundGoalSessionLauncherForTests } from "../adapters/pi/index.js";
+function git(cwd, args) {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+function createGitWorkspace() {
+    const repo = mkdtempSync(join(tmpdir(), "goal-pi-orchestrate-workspace-"));
+    git(repo, ["init", "-b", "main"]);
+    git(repo, ["config", "user.email", "goal@example.test"]);
+    git(repo, ["config", "user.name", "Goal Test"]);
+    writeFileSync(join(repo, "README.md"), "# fixture\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "initial"]);
+    return repo;
+}
 test("Pi adapter keeps model-visible goal tools Codex-compatible", async () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-tools-"));
     const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
@@ -35,6 +49,96 @@ test("Pi adapter keeps model-visible goal tools Codex-compatible", async () => {
         else
             process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
         rmSync(dir, { recursive: true, force: true });
+    }
+});
+test("Pi orchestrated goal start plans DAG and launches a subagent worktree", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-orchestrated-session-"));
+    const workspace = createGitWorkspace();
+    const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
+    process.env.AGENT_GOAL_STATE_HOME = dir;
+    let commandHandler;
+    const handlers = new Map();
+    const prompts = [];
+    const launched = [];
+    const mirrored = [];
+    setPiBackgroundGoalSessionLauncherForTests(async (request) => {
+        launched.push(request);
+        const index = launched.length;
+        return {
+            sessionFile: request.sessionFile ?? join(dir, `session-${index}.jsonl`),
+            sessionId: request.sessionId ?? `session-${index}`,
+            setSessionName: async () => undefined,
+            sendPrompt: async (prompt) => {
+                prompts.push(prompt);
+            },
+            stop: () => undefined,
+        };
+    });
+    const pi = {
+        registerTool() { },
+        registerCommand(_name, options) {
+            commandHandler = options.handler;
+        },
+        on(event, handler) {
+            const list = handlers.get(event) ?? [];
+            list.push(handler);
+            handlers.set(event, list);
+        },
+        appendEntry(_type, data) {
+            mirrored.push(data);
+        },
+        sendMessage() { },
+    };
+    const notifications = [];
+    const controllerCtx = {
+        hasUI: true,
+        cwd: workspace,
+        model: { provider: "test", id: "model" },
+        ui: {
+            notify(message) {
+                notifications.push(message);
+            },
+            setStatus() { },
+            setWidget() { },
+            confirm: async () => true,
+            editor: async () => undefined,
+            select: async () => undefined,
+            custom: async () => undefined,
+        },
+        sessionManager: {
+            getSessionFile: () => "/controller/session.jsonl",
+            getSessionName: () => "controller",
+        },
+        isIdle: () => true,
+        hasPendingMessages: () => false,
+    };
+    try {
+        goalPiExtension(pi);
+        assert.ok(commandHandler);
+        await commandHandler?.(`--orchestrate --workspace ${workspace} --branch main Implement orchestrated goal`, controllerCtx);
+        assert.equal(launched.length, 2);
+        assert.equal(launched[0]?.cwd, workspace);
+        assert.match(launched[0]?.sessionName ?? "", /^goal:/);
+        assert.notEqual(launched[1]?.cwd, workspace);
+        assert.match(launched[1]?.cwd ?? "", /\.worktrees/);
+        assert.match(git(launched[1]?.cwd ?? workspace, ["branch", "--show-current"]), /^goal\//);
+        assert.equal(prompts.length, 2);
+        assert.match(prompts[0] ?? "", /Controller orchestration session/);
+        assert.match(prompts[1] ?? "", /SUBAGENT_RESULT/);
+        assert.match(notifications.at(-1) ?? "", /planned 1 DAG node\(s\); started 1 subagent\(s\)/);
+        assert.ok(mirrored.some((entry) => entry.kind === "goal_dag_node"));
+        assert.ok(mirrored.some((entry) => entry.kind === "goal_subagent"));
+        for (const handler of handlers.get("session_shutdown") ?? [])
+            await handler({ type: "session_shutdown", reason: "quit" });
+    }
+    finally {
+        setPiBackgroundGoalSessionLauncherForTests();
+        if (previousStateHome === undefined)
+            delete process.env.AGENT_GOAL_STATE_HOME;
+        else
+            process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(workspace, { recursive: true, force: true });
     }
 });
 test("Pi goal-owned session creation launches in background without replacing controller session", async () => {

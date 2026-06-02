@@ -5,7 +5,9 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { Type } from "typebox";
 import {
   GoalRuntime,
+  NativeGitWorkspaceManager,
   SQLiteGoalStore,
+  createNativeGitSubagentWorkspaceAllocator,
   parseGoalCommand,
   renderActiveGoalReminderPrompt,
   type BlockedAuditEvidence,
@@ -25,6 +27,7 @@ import {
 import { GoalListController } from "./goal-list-ui.js";
 import { GoalMonitorController, readGoalTranscript, type GoalMonitorAction } from "./monitor-ui.js";
 import { PI_GOAL_SESSION_ENTRY_TYPE, PiSessionGoalMirrorStore } from "./session-store.js";
+import { PiHarnessSubagentAdapter } from "./subagent-adapter.js";
 import {
   parseGoalWorkspaceFlags,
   parseWorkspaceProfileCommand,
@@ -112,6 +115,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
         "--branch",
         "--ref",
         "--legacy-session",
+        "--orchestrate",
         "list",
         "status",
         "monitor",
@@ -403,7 +407,7 @@ async function handlePiGoalCommand(
     const binding = resolveWorkspaceBinding(workspaceFlags, profiles, ctx.cwd);
     const validation = validateExecutionWorkspace(binding);
     if (!validation.ok) throw new Error(validation.message ?? "execution workspace validation failed");
-    await startGoalOwnedPiSession(runtime, ctx, command, binding, validation, backgroundGoalSessions);
+    await startGoalOwnedPiSession(runtime, ctx, command, binding, validation, backgroundGoalSessions, { orchestrate: workspaceFlags.orchestrate === true });
     return;
   }
 
@@ -450,6 +454,7 @@ async function startGoalOwnedPiSession(
   binding: ResolvedWorkspaceBinding,
   validation: WorkspaceValidationResult,
   backgroundGoalSessions: Map<string, BackgroundGoalSessionHandle>,
+  options: { orchestrate?: boolean } = {},
 ): Promise<void> {
   const originSessionKey = resolveSessionKey(ctx);
   const labelObjective = command.objective.length <= 64 ? command.objective : `${command.objective.slice(0, 61)}...`;
@@ -484,6 +489,15 @@ async function startGoalOwnedPiSession(
       updatedAt: new Date().toISOString(),
     });
     backgroundGoalSessions.set(created.goal.goalId, background);
+    if (options.orchestrate) {
+      await background.sendPrompt(renderGoalOwnedControllerInitialPrompt(created.goal, binding, validation));
+      const orchestration = await runPiGoalControllerLoopForGoal(runtime, ctx, created.goal, binding);
+      ctx.ui.notify(
+        `Goal-owned controller session started (${shortGoalId}) and planned ${orchestration.plannedNodeCount} DAG node(s); started ${orchestration.startedSubagentCount} subagent(s). Workspace: ${binding.workspace}${formatWorkspaceValidationSuffix(validation)}. Use /goal monitor ${shortGoalId} or /goal list to inspect it.`,
+        "info",
+      );
+      return;
+    }
     await background.sendPrompt(renderGoalOwnedSessionInitialPrompt(created.goal, binding, validation));
     ctx.ui.notify(
       `Goal-owned background session started (${shortGoalId}). Workspace: ${binding.workspace}${formatWorkspaceValidationSuffix(validation)}. Use /goal monitor ${shortGoalId} or /goal list to inspect it.`,
@@ -493,6 +507,46 @@ async function startGoalOwnedPiSession(
     background.stop();
     throw error;
   }
+}
+
+async function runPiGoalControllerLoopForGoal(
+  runtime: GoalRuntime,
+  ctx: ExtensionContext | ExtensionCommandContext,
+  goal: GoalRecord,
+  binding: ResolvedWorkspaceBinding,
+): Promise<{ plannedNodeCount: number; startedSubagentCount: number }> {
+  const existingNodes = await runtime.listGoalDagNodes(goal.goalId);
+  const planned = existingNodes.length > 0
+    ? { nodes: existingNodes }
+    : await runtime.planGoalDagFromObjective(goal.goalId, goal.objective, {
+        defaultWorkspaceStrategy: "native-git-worktree",
+        defaultCompletionGates: ["controller-validation"],
+      });
+  const workspaceManager = new NativeGitWorkspaceManager({ defaultBaseRef: binding.branch ?? binding.ref, fetch: false });
+  const adapter = new PiHarnessSubagentAdapter({ launcher: backgroundGoalSessionLauncher, modelArg: modelArgFromContext(ctx) });
+  const loop = await runtime.runGoalControllerLoop(goal.goalId, {
+    adapter,
+    maxTicks: 1,
+    intervalMs: 0,
+    schedulingPolicy: { maxConcurrentSubagents: readPiGoalMaxSubagents() },
+    workspaceAllocator: createNativeGitSubagentWorkspaceAllocator(workspaceManager, {
+      controllerWorkspacePath: binding.workspace,
+      baseRef: binding.branch ?? binding.ref,
+      metadata: { controllerGoalId: goal.goalId },
+    }),
+    metadata: { controllerGoalId: goal.goalId },
+  });
+  return {
+    plannedNodeCount: planned.nodes.length,
+    startedSubagentCount: loop.ticks.reduce((count, tick) => count + tick.started.length, 0),
+  };
+}
+
+function readPiGoalMaxSubagents(): number {
+  const raw = process.env.AGENT_GOAL_PI_MAX_SUBAGENTS;
+  if (!raw) return 1;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
 function modelArgFromContext(ctx: ExtensionContext | ExtensionCommandContext): string | undefined {
@@ -787,6 +841,25 @@ function renderGoalOwnedSessionInitialPrompt(
     `- Branch verification: ${validation.branchVerificationStatus}`,
     "",
     "Before making file changes, operate in the configured workspace above. Do not create, switch, or delete worktrees/branches as part of /goal itself.",
+  ].join("\n");
+}
+
+function renderGoalOwnedControllerInitialPrompt(
+  goal: GoalRecord,
+  binding: ResolvedWorkspaceBinding,
+  validation: WorkspaceValidationResult,
+): string {
+  return [
+    `Controller orchestration session for active goal: ${goal.objective}`,
+    "",
+    "This Pi session is the controller record for a goal DAG. The portable runtime will plan DAG nodes and launch subagents in dedicated worktrees.",
+    "Do not self-report the whole goal complete from this controller transcript unless controller validation has verified every DAG node.",
+    "",
+    "Controller workspace binding:",
+    `- Workspace: ${binding.workspace}`,
+    binding.branch ? `- Branch: ${binding.branch}` : binding.ref ? `- Ref: ${binding.ref}` : "- Branch/ref: not applicable",
+    `- Workspace status: ${validation.workspaceStatus}`,
+    `- Branch verification: ${validation.branchVerificationStatus}`,
   ].join("\n");
 }
 

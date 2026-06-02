@@ -8,6 +8,7 @@ export interface GoalWorkspaceFlags {
   branch?: string;
   ref?: string;
   legacySession?: boolean;
+  orchestrate?: boolean;
   remainingArgs: string;
 }
 
@@ -44,6 +45,7 @@ export function parseGoalWorkspaceFlags(args: string): GoalWorkspaceFlags {
   let branch: string | undefined;
   let ref: string | undefined;
   let legacySession = false;
+  let orchestrate = false;
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
@@ -63,12 +65,19 @@ export function parseGoalWorkspaceFlags(args: string): GoalWorkspaceFlags {
       legacySession = true;
       continue;
     }
+    if (token === "--orchestrate") {
+      orchestrate = true;
+      continue;
+    }
     remaining.push(token);
   }
 
   if (branch && ref) throw new Error("only one of --branch or --ref may be supplied");
   if (legacySession && (workspace || branch || ref)) throw new Error("--legacy-session cannot be combined with --workspace, --branch, or --ref");
-  return { workspace, branch, ref, legacySession, remainingArgs: remaining.join(" ") };
+  if (legacySession && orchestrate) throw new Error("--orchestrate cannot be combined with --legacy-session");
+  const parsed: GoalWorkspaceFlags = { workspace, branch, ref, legacySession, remainingArgs: remaining.join(" ") };
+  if (orchestrate) parsed.orchestrate = true;
+  return parsed;
 }
 
 export function parseWorkspaceProfileCommand(args: string, cwd: string): WorkspaceProfileCommand | undefined {

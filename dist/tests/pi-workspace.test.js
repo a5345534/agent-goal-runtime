@@ -15,6 +15,18 @@ test("parses inline workspace and branch flags", () => {
         remainingArgs: "implement the migration",
     });
 });
+test("parses orchestration flag for workspace-bound goals", () => {
+    const parsed = parseGoalWorkspaceFlags("--orchestrate --workspace ./prepared --branch feat/a implement dag");
+    assert.deepEqual(parsed, {
+        workspace: "./prepared",
+        branch: "feat/a",
+        ref: undefined,
+        legacySession: false,
+        orchestrate: true,
+        remainingArgs: "implement dag",
+    });
+    assert.throws(() => parseGoalWorkspaceFlags("--legacy-session --orchestrate keep this local"), /cannot be combined/);
+});
 test("parses explicit legacy-session fallback and rejects mixed workspace binding", () => {
     assert.deepEqual(parseGoalWorkspaceFlags("--legacy-session keep this local"), {
         workspace: undefined,
