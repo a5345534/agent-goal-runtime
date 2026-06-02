@@ -1,13 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import goalPiExtension, { setPiBackgroundGoalSessionLauncherForTests } from "../adapters/pi/index.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+async function waitForAssertion(assertion: () => void, timeoutMs = 1_500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(20);
+    }
+  }
+  if (lastError) throw lastError;
+  assertion();
 }
 
 function createGitWorkspace(): string {
@@ -135,6 +152,201 @@ test("Pi orchestrated goal start plans DAG and launches a subagent worktree", as
     setPiBackgroundGoalSessionLauncherForTests();
     if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;
     else process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Pi controller poller finalizes completed subagents and removes completed worktrees", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "goal-poller-closeout-"));
+  const workspace = createGitWorkspace();
+  const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
+  const previousPollMs = process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS;
+  process.env.AGENT_GOAL_STATE_HOME = dir;
+  process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = "10";
+  let commandHandler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+  const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+  const launched: Array<{ cwd: string; sessionId?: string; sessionFile?: string; sessionName: string; modelArg?: string }> = [];
+  setPiBackgroundGoalSessionLauncherForTests(async (request) => {
+    launched.push(request);
+    const index = launched.length;
+    const sessionFile = request.sessionFile ?? join(dir, `closeout-session-${index}.jsonl`);
+    return {
+      sessionFile,
+      sessionId: request.sessionId ?? `closeout-session-${index}`,
+      setSessionName: async () => undefined,
+      sendPrompt: async () => {
+        if (!request.sessionName.startsWith("subagent ")) return;
+        writeFileSync(
+          sessionFile,
+          [
+            JSON.stringify({ type: "session", timestamp: "2026-06-02T00:00:00.000Z", cwd: request.cwd }),
+            JSON.stringify({
+              type: "message",
+              timestamp: "2026-06-02T00:00:01.000Z",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "SUBAGENT_RESULT: completed and verified" }],
+              },
+            }),
+          ].join("\n"),
+        );
+      },
+      stop: () => undefined,
+    };
+  });
+  const pi = {
+    registerTool() {},
+    registerCommand(_name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
+      commandHandler = options.handler;
+    },
+    on(event: string, handler: (...args: unknown[]) => unknown) {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    },
+    appendEntry() {},
+    sendMessage() {},
+  };
+  const statuses: string[] = [];
+  const widgets: string[][] = [];
+  const controllerCtx = {
+    hasUI: true,
+    cwd: workspace,
+    model: { provider: "test", id: "model" },
+    ui: {
+      notify() {},
+      setStatus(_name: string, value?: string) {
+        if (value) statuses.push(value);
+      },
+      setWidget(_name: string, value?: string[]) {
+        if (value) widgets.push(value);
+      },
+      confirm: async () => true,
+      editor: async () => undefined,
+      select: async () => undefined,
+      custom: async () => undefined,
+    },
+    sessionManager: {
+      getSessionFile: () => "/controller/session.jsonl",
+      getSessionName: () => "controller",
+    },
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+  };
+
+  try {
+    goalPiExtension(pi as never);
+    assert.ok(commandHandler);
+    await commandHandler?.(`--workspace ${workspace} --branch main Implement closeout`, controllerCtx as never);
+
+    await waitForAssertion(() => assert.equal(statuses.at(-1), "🎯 complete"));
+    assert.equal(launched.length, 2);
+    assert.equal(existsSync(launched[1]?.cwd ?? ""), false);
+    assert.match(widgets.at(-1)?.[0] ?? "", /^\/goal complete:/);
+    for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
+  } finally {
+    setPiBackgroundGoalSessionLauncherForTests();
+    if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;
+    else process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+    if (previousPollMs === undefined) delete process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS;
+    else process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = previousPollMs;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Pi session start recovers active goal pollers from durable state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "goal-poller-recovery-"));
+  const workspace = createGitWorkspace();
+  const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
+  const previousPollMs = process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS;
+  process.env.AGENT_GOAL_STATE_HOME = dir;
+  process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = "0";
+  let commandHandler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+  const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+  const launched: Array<{ cwd: string; sessionId?: string; sessionFile?: string; sessionName: string; modelArg?: string }> = [];
+  setPiBackgroundGoalSessionLauncherForTests(async (request) => {
+    launched.push(request);
+    const index = launched.length;
+    const sessionFile = request.sessionFile ?? join(dir, `recovery-session-${index}.jsonl`);
+    return {
+      sessionFile,
+      sessionId: request.sessionId ?? `recovery-session-${index}`,
+      setSessionName: async () => undefined,
+      sendPrompt: async () => {
+        if (!request.sessionName.startsWith("subagent ")) return;
+        writeFileSync(
+          sessionFile,
+          [
+            JSON.stringify({ type: "session", timestamp: "2026-06-02T00:00:00.000Z", cwd: request.cwd }),
+            JSON.stringify({
+              type: "message",
+              timestamp: "2026-06-02T00:00:01.000Z",
+              message: { role: "assistant", content: [{ type: "text", text: "SUBAGENT_RESULT: recovered closeout" }] },
+            }),
+          ].join("\n"),
+        );
+      },
+      stop: () => undefined,
+    };
+  });
+  const pi = {
+    registerTool() {},
+    registerCommand(_name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
+      commandHandler = options.handler;
+    },
+    on(event: string, handler: (...args: unknown[]) => unknown) {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    },
+    appendEntry() {},
+    sendMessage() {},
+  };
+  const statuses: string[] = [];
+  const controllerCtx = {
+    hasUI: true,
+    cwd: workspace,
+    model: { provider: "test", id: "model" },
+    ui: {
+      notify() {},
+      setStatus(_name: string, value?: string) {
+        if (value) statuses.push(value);
+      },
+      setWidget() {},
+      confirm: async () => true,
+      editor: async () => undefined,
+      select: async () => undefined,
+      custom: async () => undefined,
+    },
+    sessionManager: {
+      getSessionFile: () => "/controller/session.jsonl",
+      getSessionName: () => "controller",
+    },
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+  };
+
+  try {
+    goalPiExtension(pi as never);
+    assert.ok(commandHandler);
+    await commandHandler?.(`--workspace ${workspace} --branch main Implement recoverable closeout`, controllerCtx as never);
+    await delay(30);
+    assert.notEqual(statuses.at(-1), "🎯 complete");
+
+    process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = "10";
+    for (const handler of handlers.get("session_start") ?? []) await handler({}, controllerCtx as never);
+
+    await waitForAssertion(() => assert.equal(statuses.at(-1), "🎯 complete"));
+    assert.equal(existsSync(launched[1]?.cwd ?? ""), false);
+    for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
+  } finally {
+    setPiBackgroundGoalSessionLauncherForTests();
+    if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;
+    else process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+    if (previousPollMs === undefined) delete process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS;
+    else process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = previousPollMs;
     rmSync(dir, { recursive: true, force: true });
     rmSync(workspace, { recursive: true, force: true });
   }

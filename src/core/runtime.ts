@@ -67,6 +67,17 @@ interface ActiveTurnState {
   stopped?: GoalTurnStop;
 }
 
+export interface GoalDagTerminalFinalizationResult {
+  goalId: string;
+  terminal: boolean;
+  changed: boolean;
+  reason: string;
+  status?: GoalRecord["status"];
+  goal?: GoalRecord;
+}
+
+const TERMINAL_DAG_NODE_STATUSES = new Set<GoalDagNode["status"]>(["complete", "blocked", "failed", "superseded"]);
+
 export class GoalRuntime {
   private readonly store: GoalStore;
   private readonly callbacks: GoalAdapterCallbacks;
@@ -131,6 +142,63 @@ export class GoalRuntime {
 
   async listGoalSummaries(): Promise<GoalSummary[]> {
     return this.store.listGoalSummaries();
+  }
+
+  async getGoalById(goalId: string): Promise<GoalRecord | undefined> {
+    const summary = (await this.store.listGoalSummaries()).find((goal) => goal.goalId === goalId);
+    return summary ? this.store.getCurrentGoal(summary.sessionKey) : undefined;
+  }
+
+  async finalizeGoalFromDagTerminalState(goalId: string): Promise<GoalDagTerminalFinalizationResult> {
+    const state = await this.getGoalOrchestrationState(goalId);
+    if (state.nodes.length === 0) {
+      return { goalId, terminal: false, changed: false, reason: "goal has no DAG nodes" };
+    }
+
+    const nonTerminal = state.nodes.filter((node) => !TERMINAL_DAG_NODE_STATUSES.has(node.status));
+    if (nonTerminal.length > 0) {
+      return {
+        goalId,
+        terminal: false,
+        changed: false,
+        reason: `non-terminal DAG nodes remain: ${nonTerminal.map((node) => `${node.nodeId}:${node.status}`).join(", ")}`,
+      };
+    }
+
+    const goal = await this.getGoalById(goalId);
+    if (!goal) return { goalId, terminal: true, changed: false, reason: "goal record not found" };
+    if (goal.status !== "active") {
+      return { goalId, terminal: true, changed: false, reason: `goal already ${goal.status}`, status: goal.status, goal };
+    }
+
+    const allComplete = state.nodes.every((node) => node.status === "complete" || node.status === "superseded");
+    const nextStatus: GoalRecord["status"] = allComplete ? "complete" : "blocked";
+    const updated = await this.setGoalStatus(goal, nextStatus);
+    await this.store.clearReservation(goal.sessionKey);
+    await this.appendLedger(nextStatus === "complete" ? "goal_completed" : "goal_blocked", goal.sessionKey, updated.goalId, {
+      source: "controller_dag_terminal_state",
+      nodeStatuses: state.nodes.map((node) => ({
+        nodeId: node.nodeId,
+        status: node.status,
+        validation: node.lastValidationSummary,
+      })),
+      subagentStatuses: state.subagents.map((subagent) => ({
+        subagentId: subagent.subagentId,
+        nodeId: subagent.nodeId,
+        status: subagent.status,
+        result: subagent.selfReportedResult,
+        integrationStatus: subagent.integrationStatus,
+      })),
+    });
+    this.activeTurns.delete(goal.sessionKey);
+    return {
+      goalId,
+      terminal: true,
+      changed: true,
+      reason: allComplete ? "all DAG nodes complete" : "one or more DAG nodes ended blocked/failed",
+      status: updated.status,
+      goal: updated,
+    };
   }
 
   async saveGoalDagNode(node: GoalDagNode): Promise<void> {

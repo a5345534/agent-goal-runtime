@@ -178,7 +178,7 @@ export async function syncGoalSubagentState(
     lastActivityAt: state.lastActivityAt ?? now,
     selfReportedResult: state.selfReportedResult ?? subagent.selfReportedResult,
     controllerValidationResults,
-    integrationStatus: state.error ?? subagent.integrationStatus,
+    integrationStatus: state.error,
     updatedAt: now,
   };
 }
