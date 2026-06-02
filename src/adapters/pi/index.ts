@@ -536,12 +536,12 @@ async function runPiGoalControllerPoll(
   if (piGoalControllerPollsInFlight.has(goal.goalId)) return;
   piGoalControllerPollsInFlight.add(goal.goalId);
   try {
-    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId)) {
+    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) {
       stopPiGoalControllerPollingLoop(goal.goalId);
       return;
     }
     await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding));
-    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId)) stopPiGoalControllerPollingLoop(goal.goalId);
+    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) stopPiGoalControllerPollingLoop(goal.goalId);
   } finally {
     piGoalControllerPollsInFlight.delete(goal.goalId);
   }
@@ -551,13 +551,15 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
   runtime: GoalRuntime,
   ctx: ExtensionContext | ExtensionCommandContext,
   goalId: string,
+  binding: ResolvedWorkspaceBinding,
 ): Promise<boolean> {
   const finalization = await runtime.finalizeGoalFromDagTerminalState(goalId);
   if (!finalization.terminal) return false;
 
   if (finalization.changed) {
     const state = await runtime.getGoalOrchestrationState(goalId);
-    const cleanup = cleanupTerminalSubagentWorkspaces(new NativeGitWorkspaceManager({ fetch: false }), state);
+    const manager = new NativeGitWorkspaceManager({ fetch: false });
+    const cleanup = cleanupTerminalSubagentWorkspaces(manager, state);
     const cleanupErrors = cleanup.filter((result) => result.action === "error");
     if (cleanupErrors.length > 0) {
       safeNotify(
@@ -569,9 +571,32 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
     const handle = backgroundGoalSessions.get(goalId);
     handle?.stop();
     backgroundGoalSessions.delete(goalId);
+    const controllerCleanupError = cleanupPiControllerWorkspaceIfSafe(manager, binding);
+    if (controllerCleanupError) {
+      safeNotify(ctx, `Goal ${goalId.slice(0, 8)} completed but controller workspace cleanup failed: ${controllerCleanupError}`, "warning");
+    }
   }
 
   return true;
+}
+
+function cleanupPiControllerWorkspaceIfSafe(manager: NativeGitWorkspaceManager, binding: ResolvedWorkspaceBinding): string | undefined {
+  if (!isAutoAllocatedPiControllerWorkspace(binding)) return undefined;
+  try {
+    manager.cleanupWorkspace({ worktreePath: binding.workspace, branch: binding.branch });
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function isAutoAllocatedPiControllerWorkspace(binding: ResolvedWorkspaceBinding): boolean {
+  const normalized = path.normalize(binding.workspace);
+  return Boolean(
+    binding.branch?.startsWith("goal/goal-") &&
+    path.basename(normalized).startsWith("goal-") &&
+    normalized.includes(`${path.sep}.worktrees${path.sep}`)
+  );
 }
 
 async function resumePiGoalControllerPollingLoops(runtime: GoalRuntime, ctx: ExtensionContext | ExtensionCommandContext): Promise<void> {
