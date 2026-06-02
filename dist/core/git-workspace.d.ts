@@ -1,4 +1,5 @@
 import type { GoalControllerWorkspaceAllocator, GoalControllerWorkspaceAllocationRequest } from "./controller-loop.js";
+import type { GoalOrchestrationState, GoalSubagentRecord } from "./types.js";
 export interface NativeGitWorkspaceManagerOptions {
     /** Directory inside the repository where goal worktrees are created. Defaults to <repo>/.worktrees. */
     worktreeRoot?: string;
@@ -67,6 +68,27 @@ export interface NativeGitWorkspaceCleanupRequest {
     repoRoot?: string;
     force?: boolean;
 }
+export type NativeGitSubagentCleanupAction = "remove" | "preserve";
+export interface NativeGitSubagentCleanupPolicy {
+    /** Completed subagent worktrees are removed by default. */
+    completed?: NativeGitSubagentCleanupAction;
+    /** Blocked subagent worktrees are preserved by default for inspection. */
+    blocked?: NativeGitSubagentCleanupAction;
+    /** Failed subagent worktrees are preserved by default for inspection. */
+    failed?: NativeGitSubagentCleanupAction;
+    /** Force-remove worktrees and branches when cleanup action is remove. Defaults false. */
+    force?: boolean;
+}
+export interface NativeGitSubagentCleanupResult {
+    subagentId: string;
+    nodeId: string;
+    status: GoalSubagentRecord["status"];
+    action: "removed" | "preserved" | "skipped" | "error";
+    reason?: string;
+    workspacePath?: string;
+    branch?: string;
+    error?: string;
+}
 export declare class NativeGitWorkspaceManager {
     private readonly options;
     constructor(options?: NativeGitWorkspaceManagerOptions);
@@ -78,6 +100,8 @@ export declare class NativeGitWorkspaceManager {
     private resolveWorktreeRoot;
 }
 export declare function createNativeGitSubagentWorkspaceAllocator(manager: NativeGitWorkspaceManager, options?: NativeGitSubagentWorkspaceAllocatorOptions): GoalControllerWorkspaceAllocator;
+export declare function cleanupTerminalSubagentWorkspaces(manager: NativeGitWorkspaceManager, state: GoalOrchestrationState, policy?: NativeGitSubagentCleanupPolicy): NativeGitSubagentCleanupResult[];
+export declare function cleanupSubagentWorkspace(manager: NativeGitWorkspaceManager, subagent: GoalSubagentRecord, policy?: NativeGitSubagentCleanupPolicy): NativeGitSubagentCleanupResult;
 export declare function findGitRepositoryRoot(startPath: string): string | undefined;
 export declare function slugForGoal(goalId: string, objective: string): string;
 export declare function slugForGoalSubagent(goalId: string, nodeSlugOrId: string, nodeObjective?: string): string;

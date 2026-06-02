@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { GoalControllerWorkspaceAllocator, GoalControllerWorkspaceAllocationRequest } from "./controller-loop.js";
+import type { GoalOrchestrationState, GoalSubagentRecord } from "./types.js";
 
 export interface NativeGitWorkspaceManagerOptions {
   /** Directory inside the repository where goal worktrees are created. Defaults to <repo>/.worktrees. */
@@ -77,6 +78,30 @@ export interface NativeGitWorkspaceCleanupRequest {
   branch?: string;
   repoRoot?: string;
   force?: boolean;
+}
+
+export type NativeGitSubagentCleanupAction = "remove" | "preserve";
+
+export interface NativeGitSubagentCleanupPolicy {
+  /** Completed subagent worktrees are removed by default. */
+  completed?: NativeGitSubagentCleanupAction;
+  /** Blocked subagent worktrees are preserved by default for inspection. */
+  blocked?: NativeGitSubagentCleanupAction;
+  /** Failed subagent worktrees are preserved by default for inspection. */
+  failed?: NativeGitSubagentCleanupAction;
+  /** Force-remove worktrees and branches when cleanup action is remove. Defaults false. */
+  force?: boolean;
+}
+
+export interface NativeGitSubagentCleanupResult {
+  subagentId: string;
+  nodeId: string;
+  status: GoalSubagentRecord["status"];
+  action: "removed" | "preserved" | "skipped" | "error";
+  reason?: string;
+  workspacePath?: string;
+  branch?: string;
+  error?: string;
 }
 
 export class NativeGitWorkspaceManager {
@@ -163,7 +188,7 @@ export class NativeGitWorkspaceManager {
   }
 
   cleanupWorkspace(request: NativeGitWorkspaceCleanupRequest): void {
-    const repoRoot = request.repoRoot ?? findGitRepositoryRoot(request.worktreePath) ?? process.cwd();
+    const repoRoot = request.repoRoot ?? findGitCommonRepositoryRoot(request.worktreePath) ?? findGitRepositoryRoot(request.worktreePath) ?? process.cwd();
     const forceFlag = request.force ? "--force" : undefined;
     const removeArgs = ["worktree", "remove", ...(forceFlag ? [forceFlag] : []), request.worktreePath];
     git(repoRoot, removeArgs);
@@ -234,9 +259,73 @@ export function createNativeGitSubagentWorkspaceAllocator(
   };
 }
 
+export function cleanupTerminalSubagentWorkspaces(
+  manager: NativeGitWorkspaceManager,
+  state: GoalOrchestrationState,
+  policy: NativeGitSubagentCleanupPolicy = {},
+): NativeGitSubagentCleanupResult[] {
+  return state.subagents.map((subagent) => cleanupSubagentWorkspace(manager, subagent, policy));
+}
+
+export function cleanupSubagentWorkspace(
+  manager: NativeGitWorkspaceManager,
+  subagent: GoalSubagentRecord,
+  policy: NativeGitSubagentCleanupPolicy = {},
+): NativeGitSubagentCleanupResult {
+  if (!["complete", "blocked", "failed"].includes(subagent.status)) {
+    return cleanupResult(subagent, "skipped", "subagent is not terminal");
+  }
+  if (!subagent.workspacePath) {
+    return cleanupResult(subagent, "skipped", "subagent has no workspacePath");
+  }
+
+  const decision = cleanupDecision(subagent, policy);
+  if (decision === "preserve") return cleanupResult(subagent, "preserved", `policy preserves ${subagent.status} workspaces`);
+
+  try {
+    manager.cleanupWorkspace({ worktreePath: subagent.workspacePath, branch: subagent.branch, force: policy.force });
+    return cleanupResult(subagent, "removed");
+  } catch (error) {
+    return cleanupResult(subagent, "error", undefined, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function cleanupDecision(subagent: GoalSubagentRecord, policy: NativeGitSubagentCleanupPolicy): NativeGitSubagentCleanupAction {
+  if (subagent.status === "complete") return policy.completed ?? "remove";
+  if (subagent.status === "blocked") return policy.blocked ?? "preserve";
+  if (subagent.status === "failed") return policy.failed ?? "preserve";
+  return "preserve";
+}
+
+function cleanupResult(
+  subagent: GoalSubagentRecord,
+  action: NativeGitSubagentCleanupResult["action"],
+  reason?: string,
+  error?: string,
+): NativeGitSubagentCleanupResult {
+  return {
+    subagentId: subagent.subagentId,
+    nodeId: subagent.nodeId,
+    status: subagent.status,
+    action,
+    reason,
+    workspacePath: subagent.workspacePath,
+    branch: subagent.branch,
+    error,
+  };
+}
+
 export function findGitRepositoryRoot(startPath: string): string | undefined {
   const output = safeGit(resolve(startPath), ["rev-parse", "--show-toplevel"]);
   return output || undefined;
+}
+
+function findGitCommonRepositoryRoot(startPath: string): string | undefined {
+  const resolvedStart = resolve(startPath);
+  const commonDir = safeGit(resolvedStart, ["rev-parse", "--git-common-dir"]);
+  if (!commonDir) return undefined;
+  const absoluteCommonDir = isAbsolute(commonDir) ? commonDir : resolve(resolvedStart, commonDir);
+  return basename(absoluteCommonDir) === ".git" ? dirname(absoluteCommonDir) : dirname(absoluteCommonDir);
 }
 
 export function slugForGoal(goalId: string, objective: string): string {
