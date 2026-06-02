@@ -11,7 +11,18 @@ test("parses inline workspace and branch flags", () => {
         workspace: "./prepared",
         branch: "feat/a",
         ref: undefined,
+        dagFile: undefined,
         remainingArgs: "implement the migration",
+    });
+});
+test("parses explicit DAG file flag", () => {
+    const parsed = parseGoalWorkspaceFlags("--workspace ./prepared --branch feat/a --dag .goal/backend.dag.json --tokens 500k");
+    assert.deepEqual(parsed, {
+        workspace: "./prepared",
+        branch: "feat/a",
+        ref: undefined,
+        dagFile: ".goal/backend.dag.json",
+        remainingArgs: "--tokens 500k",
     });
 });
 test("removed orchestration and legacy flags fail explicitly", () => {

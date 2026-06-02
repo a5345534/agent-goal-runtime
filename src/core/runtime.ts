@@ -12,6 +12,7 @@ import {
   type GoalDagObjectivePlanOptions,
   type GoalDagPlannedNodesResult,
 } from "./dag-planner.js";
+import { createGoalDagNodesFromFileDocument, type GoalDagFileDocument, type GoalDagFilePlanOptions } from "./dag-file.js";
 import {
   createGoalDagNodes,
   getGoalDagReadyQueue as computeGoalDagReadyQueue,
@@ -176,6 +177,16 @@ export class GoalRuntime {
     options: GoalDagObjectivePlanOptions = {},
   ): Promise<GoalDagPlannedNodesResult> {
     const plan = createGoalDagNodesFromObjective(goalId, objective, options);
+    for (const node of plan.nodes) await this.store.saveGoalDagNode(node);
+    return plan;
+  }
+
+  async planGoalDagFromFileDocument(
+    goalId: string,
+    document: GoalDagFileDocument,
+    options: GoalDagFilePlanOptions = {},
+  ): Promise<GoalDagPlannedNodesResult> {
+    const plan = createGoalDagNodesFromFileDocument(goalId, document, options);
     for (const node of plan.nodes) await this.store.saveGoalDagNode(node);
     return plan;
   }

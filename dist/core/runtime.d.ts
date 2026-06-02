@@ -1,5 +1,6 @@
 import { type GoalControllerLoopOptions, type GoalControllerLoopResult, type GoalControllerTickOptions, type GoalControllerTickResult } from "./controller-loop.js";
 import { type GoalDagObjectivePlanOptions, type GoalDagPlannedNodesResult } from "./dag-planner.js";
+import { type GoalDagFileDocument, type GoalDagFilePlanOptions } from "./dag-file.js";
 import { type GoalDagPlanNodeInput, type GoalDagPlanOptions, type GoalDagReadyQueue, type GoalDagSchedulingPolicy } from "./dag-scheduler.js";
 import { type GoalCommand } from "./parser.js";
 import { type HarnessSubagentAdapter, type StartGoalSubagentOptions } from "./subagent-adapter.js";
@@ -35,6 +36,7 @@ export declare class GoalRuntime {
     getGoalOrchestrationState(goalId: string): Promise<GoalOrchestrationState>;
     planGoalDag(goalId: string, inputs: GoalDagPlanNodeInput[], options?: GoalDagPlanOptions): Promise<GoalDagNode[]>;
     planGoalDagFromObjective(goalId: string, objective: string, options?: GoalDagObjectivePlanOptions): Promise<GoalDagPlannedNodesResult>;
+    planGoalDagFromFileDocument(goalId: string, document: GoalDagFileDocument, options?: GoalDagFilePlanOptions): Promise<GoalDagPlannedNodesResult>;
     getGoalDagReadyQueue(goalId: string, policy?: GoalDagSchedulingPolicy): Promise<GoalDagReadyQueue>;
     startGoalSubagent(adapter: HarnessSubagentAdapter, node: GoalDagNode, options: StartGoalSubagentOptions): Promise<GoalSubagentRecord>;
     sendGoalSubagentPrompt(adapter: HarnessSubagentAdapter, subagent: GoalSubagentRecord, prompt: string, options?: {

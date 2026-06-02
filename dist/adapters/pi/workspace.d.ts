@@ -3,6 +3,7 @@ export interface GoalWorkspaceFlags {
     workspace?: string;
     branch?: string;
     ref?: string;
+    dagFile?: string;
     remainingArgs: string;
 }
 export interface ResolvedWorkspaceBinding {
