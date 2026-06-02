@@ -223,7 +223,7 @@ export class GoalRuntime {
     return { goal: updated, message: "Goal paused." };
   }
 
-  async resumeGoal(sessionKey: string): Promise<GoalToolResult> {
+  async resumeGoal(sessionKey: string, options: { continueIfIdle?: boolean } = {}): Promise<GoalToolResult> {
     await this.requireGoal(sessionKey);
     await this.accountUsage(sessionKey);
     const accounted = await this.requireGoal(sessionKey);
@@ -237,7 +237,7 @@ export class GoalRuntime {
     await this.appendLedger("goal_resumed", sessionKey, updated.goalId, { status: updated.status });
     await this.store.clearReservation(sessionKey);
     await this.callbacks.notifyGoalUpdated?.(updated);
-    await this.maybeContinueIfIdle(sessionKey);
+    if (options.continueIfIdle !== false) await this.maybeContinueIfIdle(sessionKey);
     return {
       goal: updated,
       message: updated.status === "budgetLimited" ? "Goal token budget is still exhausted." : "Goal resumed.",

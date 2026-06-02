@@ -36,7 +36,9 @@ export declare class GoalRuntime {
         tokenBudget?: number;
     }): Promise<GoalToolResult>;
     pauseGoal(sessionKey: string): Promise<GoalToolResult>;
-    resumeGoal(sessionKey: string): Promise<GoalToolResult>;
+    resumeGoal(sessionKey: string, options?: {
+        continueIfIdle?: boolean;
+    }): Promise<GoalToolResult>;
     clearGoal(sessionKey: string): Promise<GoalToolResult>;
     toolGetGoal(sessionKey: string): Promise<GoalToolResult>;
     toolCreateGoal(sessionKey: string, objective: string, tokenBudget?: number): Promise<GoalToolResult>;

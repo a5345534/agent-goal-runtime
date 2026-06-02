@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import goalPiExtension from "../adapters/pi/index.js";
+import goalPiExtension, { setPiBackgroundGoalSessionLauncherForTests } from "../adapters/pi/index.js";
 test("Pi adapter keeps model-visible goal tools Codex-compatible", async () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-tools-"));
     const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
@@ -37,14 +37,30 @@ test("Pi adapter keeps model-visible goal tools Codex-compatible", async () => {
         rmSync(dir, { recursive: true, force: true });
     }
 });
-test("Pi goal-owned session creation binds callbacks to replacement session context", async () => {
+test("Pi goal-owned session creation launches in background without replacing controller session", async () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-session-context-"));
     const workspace = mkdtempSync(join(tmpdir(), "goal-workspace-"));
     const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
     process.env.AGENT_GOAL_STATE_HOME = dir;
+    const goalSessionFile = join(dir, "goal-session.jsonl");
     let commandHandler;
     const handlers = new Map();
+    const prompts = [];
     const sentMessages = [];
+    const stopped = [];
+    const launched = [];
+    setPiBackgroundGoalSessionLauncherForTests(async (request) => {
+        launched.push(request);
+        return {
+            sessionFile: goalSessionFile,
+            sessionId: request.sessionId ?? "resumed-session",
+            setSessionName: async () => undefined,
+            sendPrompt: async (prompt) => {
+                prompts.push(prompt);
+            },
+            stop: () => stopped.push(request.sessionId ?? "resumed-session"),
+        };
+    });
     const pi = {
         registerTool() { },
         registerCommand(_name, options) {
@@ -56,78 +72,73 @@ test("Pi goal-owned session creation binds callbacks to replacement session cont
             handlers.set(event, list);
         },
         appendEntry() { },
-        sendMessage() { },
+        sendMessage(message) {
+            sentMessages.push(message);
+        },
     };
-    let controllerInvalid = false;
-    const stale = () => {
-        if (controllerInvalid)
-            throw new Error("stale controller context used");
-    };
-    const ui = {
-        notify: () => stale(),
-        setStatus: () => stale(),
-        setWidget: () => stale(),
-        confirm: async () => true,
-        editor: async () => undefined,
-        select: async () => undefined,
-        custom: async () => undefined,
-    };
+    const notifications = [];
     const controllerCtx = {
         hasUI: true,
         cwd: workspace,
-        ui,
+        model: { provider: "test", id: "model" },
+        ui: {
+            notify(message) {
+                notifications.push(message);
+            },
+            setStatus() { },
+            setWidget() { },
+            confirm: async () => true,
+            editor: async () => undefined,
+            select: async () => undefined,
+            custom: async () => undefined,
+        },
         sessionManager: {
             getSessionFile: () => "/controller/session.jsonl",
             getSessionName: () => "controller",
         },
-        isIdle: () => {
-            stale();
-            return true;
+        isIdle: () => true,
+        hasPendingMessages: () => false,
+        newSession: async () => {
+            throw new Error("newSession should not be used for background goals");
         },
-        hasPendingMessages: () => {
-            stale();
-            return false;
-        },
-        newSession: async (options) => {
-            await options.setup?.({ appendSessionInfo() { } });
-            controllerInvalid = true;
-            const goalCtx = {
-                hasUI: true,
-                cwd: workspace,
-                ui: {
-                    notify() { },
-                    setStatus() { },
-                    setWidget() { },
-                    confirm: async () => true,
-                    editor: async () => undefined,
-                    select: async () => undefined,
-                    custom: async () => undefined,
-                },
-                sessionManager: {
-                    getSessionFile: () => "/goal/session.jsonl",
-                    getSessionName: () => "goal",
-                    appendSessionInfo() { },
-                },
-                isIdle: () => true,
-                hasPendingMessages: () => false,
-                sendUserMessage: async (content) => {
-                    sentMessages.push(content);
-                },
-            };
-            await options.withSession?.(goalCtx);
-            return { cancelled: false };
+        switchSession: async () => {
+            throw new Error("switchSession should not be used for background goal lifecycle commands");
         },
     };
     try {
         goalPiExtension(pi);
         assert.ok(commandHandler);
         await commandHandler?.(`--workspace ${workspace} write a small story`, controllerCtx);
-        assert.equal(sentMessages.length, 1);
-        assert.match(sentMessages[0] ?? "", /Execution workspace binding/);
+        assert.equal(launched.length, 1);
+        assert.equal(launched[0]?.cwd, workspace);
+        assert.equal(launched[0]?.modelArg, "test/model");
+        assert.equal(prompts.length, 1);
+        assert.match(prompts[0] ?? "", /Execution workspace binding/);
+        const shortId = notifications.at(-1)?.match(/\(([0-9a-f]{8})\)/)?.[1];
+        assert.match(notifications.at(-1) ?? "", /background session started/);
+        assert.ok(shortId);
+        writeFileSync(goalSessionFile, [
+            JSON.stringify({ type: "session", id: "s", cwd: workspace, timestamp: "2026-06-01T00:00:00.000Z" }),
+            JSON.stringify({ type: "message", message: { role: "user", content: "start goal" }, timestamp: "2026-06-01T00:00:01.000Z" }),
+            JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "history line" }] }, timestamp: "2026-06-01T00:00:02.000Z" }),
+        ].join("\n"));
+        await commandHandler?.(`history ${shortId}`, controllerCtx);
+        const historyMessage = sentMessages.find((message) => message.details?.kind === "goal_history");
+        assert.ok(historyMessage);
+        assert.equal(historyMessage.customType, "agent-goal-runtime");
+        assert.match(historyMessage.content ?? "", /history line/);
+        await commandHandler?.(`pause ${shortId}`, controllerCtx);
+        await commandHandler?.(`resume ${shortId}`, controllerCtx);
+        assert.equal(launched.length, 2);
+        assert.equal(launched[1]?.sessionFile, goalSessionFile);
+        assert.equal(prompts.length, 2);
+        assert.match(prompts[1] ?? "", /Resume working toward the active goal/);
         for (const handler of handlers.get("session_shutdown") ?? [])
-            await handler();
+            await handler({ type: "session_shutdown", reason: "quit" });
+        assert.deepEqual(stopped, []);
     }
     finally {
+        setPiBackgroundGoalSessionLauncherForTests();
         if (previousStateHome === undefined)
             delete process.env.AGENT_GOAL_STATE_HOME;
         else

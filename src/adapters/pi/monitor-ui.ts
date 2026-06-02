@@ -32,7 +32,7 @@ export class GoalMonitorController {
   get actions(): GoalMonitorAction[] {
     const actions: GoalMonitorAction[] = [];
     if (this.goal.status === "active") actions.push("pause");
-    if (["paused", "blocked", "budgetLimited", "usageLimited"].includes(this.goal.status)) actions.push("resume");
+    if (["active", "paused", "blocked", "budgetLimited", "usageLimited"].includes(this.goal.status)) actions.push("resume");
     actions.push("clear");
     if (this.goal.sessionFile) actions.push("openSession");
     actions.push("close");

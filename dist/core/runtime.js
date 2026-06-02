@@ -165,7 +165,7 @@ export class GoalRuntime {
         this.markTurnStopped(sessionKey, "pause", updated.goalId, "Goal paused.");
         return { goal: updated, message: "Goal paused." };
     }
-    async resumeGoal(sessionKey) {
+    async resumeGoal(sessionKey, options = {}) {
         await this.requireGoal(sessionKey);
         await this.accountUsage(sessionKey);
         const accounted = await this.requireGoal(sessionKey);
@@ -179,7 +179,8 @@ export class GoalRuntime {
         await this.appendLedger("goal_resumed", sessionKey, updated.goalId, { status: updated.status });
         await this.store.clearReservation(sessionKey);
         await this.callbacks.notifyGoalUpdated?.(updated);
-        await this.maybeContinueIfIdle(sessionKey);
+        if (options.continueIfIdle !== false)
+            await this.maybeContinueIfIdle(sessionKey);
         return {
             goal: updated,
             message: updated.status === "budgetLimited" ? "Goal token budget is still exhausted." : "Goal resumed.",
