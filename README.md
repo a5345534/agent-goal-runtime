@@ -120,13 +120,18 @@ default Git-backed workspace strategy. It can:
   workspace branch, remote default branch, current branch, or HEAD,
 - create unique controller and subagent worktrees/branches under `.worktrees/`,
 - record allocation shapes suitable for goal/subagent state metadata,
-- and clean up generated worktrees/branches when a host policy allows it.
+- clean up generated worktrees/branches when a host policy allows it,
+- apply terminal subagent cleanup policy that removes completed worktrees by
+  default while preserving blocked/failed worktrees for inspection.
 
 Subagent allocation is available through `allocateSubagentWorkspace()` and the
 controller-loop adapter `createNativeGitSubagentWorkspaceAllocator()`. The
 allocator returns the subagent id, worktree path, branch, and allocation metadata
 for the controller loop's workspace hook, so each DAG node can run in its own
-branch/worktree without coupling the scheduler to Git.
+branch/worktree without coupling the scheduler to Git. Cleanup helpers
+`cleanupTerminalSubagentWorkspaces()` and `cleanupSubagentWorkspace()` are
+explicit host-policy calls; the controller loop does not delete worktrees
+implicitly.
 
 This manager uses only native `git` commands and does not require Pi, GitHub,
 OpenSpec, or project-local helper scripts.

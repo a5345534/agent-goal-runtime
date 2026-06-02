@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 export class NativeGitWorkspaceManager {
     options;
     constructor(options = {}) {
@@ -79,7 +79,7 @@ export class NativeGitWorkspaceManager {
         throw new Error(`cannot allocate unique subagent workspace for DAG node: ${request.nodeId}`);
     }
     cleanupWorkspace(request) {
-        const repoRoot = request.repoRoot ?? findGitRepositoryRoot(request.worktreePath) ?? process.cwd();
+        const repoRoot = request.repoRoot ?? findGitCommonRepositoryRoot(request.worktreePath) ?? findGitRepositoryRoot(request.worktreePath) ?? process.cwd();
         const forceFlag = request.force ? "--force" : undefined;
         const removeArgs = ["worktree", "remove", ...(forceFlag ? [forceFlag] : []), request.worktreePath];
         git(repoRoot, removeArgs);
@@ -146,9 +146,59 @@ export function createNativeGitSubagentWorkspaceAllocator(manager, options = {})
         };
     };
 }
+export function cleanupTerminalSubagentWorkspaces(manager, state, policy = {}) {
+    return state.subagents.map((subagent) => cleanupSubagentWorkspace(manager, subagent, policy));
+}
+export function cleanupSubagentWorkspace(manager, subagent, policy = {}) {
+    if (!["complete", "blocked", "failed"].includes(subagent.status)) {
+        return cleanupResult(subagent, "skipped", "subagent is not terminal");
+    }
+    if (!subagent.workspacePath) {
+        return cleanupResult(subagent, "skipped", "subagent has no workspacePath");
+    }
+    const decision = cleanupDecision(subagent, policy);
+    if (decision === "preserve")
+        return cleanupResult(subagent, "preserved", `policy preserves ${subagent.status} workspaces`);
+    try {
+        manager.cleanupWorkspace({ worktreePath: subagent.workspacePath, branch: subagent.branch, force: policy.force });
+        return cleanupResult(subagent, "removed");
+    }
+    catch (error) {
+        return cleanupResult(subagent, "error", undefined, error instanceof Error ? error.message : String(error));
+    }
+}
+function cleanupDecision(subagent, policy) {
+    if (subagent.status === "complete")
+        return policy.completed ?? "remove";
+    if (subagent.status === "blocked")
+        return policy.blocked ?? "preserve";
+    if (subagent.status === "failed")
+        return policy.failed ?? "preserve";
+    return "preserve";
+}
+function cleanupResult(subagent, action, reason, error) {
+    return {
+        subagentId: subagent.subagentId,
+        nodeId: subagent.nodeId,
+        status: subagent.status,
+        action,
+        reason,
+        workspacePath: subagent.workspacePath,
+        branch: subagent.branch,
+        error,
+    };
+}
 export function findGitRepositoryRoot(startPath) {
     const output = safeGit(resolve(startPath), ["rev-parse", "--show-toplevel"]);
     return output || undefined;
+}
+function findGitCommonRepositoryRoot(startPath) {
+    const resolvedStart = resolve(startPath);
+    const commonDir = safeGit(resolvedStart, ["rev-parse", "--git-common-dir"]);
+    if (!commonDir)
+        return undefined;
+    const absoluteCommonDir = isAbsolute(commonDir) ? commonDir : resolve(resolvedStart, commonDir);
+    return basename(absoluteCommonDir) === ".git" ? dirname(absoluteCommonDir) : dirname(absoluteCommonDir);
 }
 export function slugForGoal(goalId, objective) {
     const shortId = sanitizeSlug(goalId).slice(0, 8) || "goal";

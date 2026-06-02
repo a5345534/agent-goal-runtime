@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createNativeGitSubagentWorkspaceAllocator, findGitRepositoryRoot, GoalRuntime, MemoryGoalStore, NativeGitWorkspaceManager, slugForGoal, slugForGoalSubagent, } from "../core/index.js";
+import { cleanupTerminalSubagentWorkspaces, createNativeGitSubagentWorkspaceAllocator, findGitRepositoryRoot, GoalRuntime, MemoryGoalStore, NativeGitWorkspaceManager, slugForGoal, slugForGoalSubagent, } from "../core/index.js";
 function git(cwd, args) {
     return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
@@ -147,6 +147,78 @@ test("native git subagent allocator plugs into controller loop workspace allocat
         assert.match(starts[0]?.branch ?? "", /^goal\/goal-abc-implement-attendance/);
         assert.equal((await runtime.getGoalSubagent("goal-abcdef12", tick.started[0]?.subagentId ?? ""))?.workspacePath, starts[0]?.cwd);
         manager.cleanupWorkspace({ repoRoot: repo, worktreePath: starts[0]?.cwd ?? "", branch: starts[0]?.branch, force: true });
+    }
+    finally {
+        rmSync(repo, { recursive: true, force: true });
+    }
+});
+test("native git cleanup policy removes completed subagent worktrees and preserves blocked ones", () => {
+    const repo = createRepo();
+    try {
+        const manager = new NativeGitWorkspaceManager({ defaultBaseRef: "main", fetch: false });
+        const complete = manager.allocateSubagentWorkspace({ invocationCwd: repo, goalId: "goal-abcdef12", nodeId: "complete-node" });
+        const blocked = manager.allocateSubagentWorkspace({ invocationCwd: repo, goalId: "goal-abcdef12", nodeId: "blocked-node" });
+        const subagents = [
+            {
+                goalId: "goal-abcdef12",
+                nodeId: "complete-node",
+                subagentId: complete.subagentId,
+                harnessAdapterId: "fake",
+                workspacePath: complete.worktreePath,
+                branch: complete.branch,
+                status: "complete",
+                prompts: [],
+                createdAt: "2026-06-02T00:00:00.000Z",
+                updatedAt: "2026-06-02T00:00:00.000Z",
+            },
+            {
+                goalId: "goal-abcdef12",
+                nodeId: "blocked-node",
+                subagentId: blocked.subagentId,
+                harnessAdapterId: "fake",
+                workspacePath: blocked.worktreePath,
+                branch: blocked.branch,
+                status: "blocked",
+                prompts: [],
+                createdAt: "2026-06-02T00:00:00.000Z",
+                updatedAt: "2026-06-02T00:00:00.000Z",
+            },
+        ];
+        const results = cleanupTerminalSubagentWorkspaces(manager, { goalId: "goal-abcdef12", nodes: [], subagents }, { force: true });
+        assert.deepEqual(results.map((item) => [item.nodeId, item.action]), [
+            ["complete-node", "removed"],
+            ["blocked-node", "preserved"],
+        ]);
+        assert.equal(existsSync(complete.worktreePath), false);
+        assert.equal(existsSync(blocked.worktreePath), true);
+        assert.throws(() => git(repo, ["show-ref", "--verify", `refs/heads/${complete.branch}`]));
+        assert.equal(git(blocked.worktreePath, ["branch", "--show-current"]), blocked.branch);
+        manager.cleanupWorkspace({ repoRoot: repo, worktreePath: blocked.worktreePath, branch: blocked.branch, force: true });
+    }
+    finally {
+        rmSync(repo, { recursive: true, force: true });
+    }
+});
+test("native git cleanup policy can remove blocked worktrees when explicitly requested", () => {
+    const repo = createRepo();
+    try {
+        const manager = new NativeGitWorkspaceManager({ defaultBaseRef: "main", fetch: false });
+        const allocation = manager.allocateSubagentWorkspace({ invocationCwd: repo, goalId: "goal-abcdef12", nodeId: "blocked-node" });
+        const subagent = {
+            goalId: "goal-abcdef12",
+            nodeId: "blocked-node",
+            subagentId: allocation.subagentId,
+            harnessAdapterId: "fake",
+            workspacePath: allocation.worktreePath,
+            branch: allocation.branch,
+            status: "blocked",
+            prompts: [],
+            createdAt: "2026-06-02T00:00:00.000Z",
+            updatedAt: "2026-06-02T00:00:00.000Z",
+        };
+        const [result] = cleanupTerminalSubagentWorkspaces(manager, { goalId: "goal-abcdef12", nodes: [], subagents: [subagent] }, { blocked: "remove", force: true });
+        assert.equal(result?.action, "removed");
+        assert.equal(existsSync(allocation.worktreePath), false);
     }
     finally {
         rmSync(repo, { recursive: true, force: true });
