@@ -238,10 +238,12 @@ test("Pi controller poller finalizes completed subagents and removes completed w
   try {
     goalPiExtension(pi as never);
     assert.ok(commandHandler);
-    await commandHandler?.(`--workspace ${workspace} --branch main Implement closeout`, controllerCtx as never);
+    await commandHandler?.("Implement closeout", controllerCtx as never);
 
     await waitForAssertion(() => assert.equal(statuses.at(-1), "🎯 complete"));
     assert.equal(launched.length, 2);
+    assert.notEqual(launched[0]?.cwd, workspace);
+    assert.equal(existsSync(launched[0]?.cwd ?? ""), false);
     assert.equal(existsSync(launched[1]?.cwd ?? ""), false);
     assert.match(widgets.at(-1)?.[0] ?? "", /^\/goal complete:/);
     for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
@@ -331,14 +333,17 @@ test("Pi session start recovers active goal pollers from durable state", async (
   try {
     goalPiExtension(pi as never);
     assert.ok(commandHandler);
-    await commandHandler?.(`--workspace ${workspace} --branch main Implement recoverable closeout`, controllerCtx as never);
+    await commandHandler?.("Implement recoverable closeout", controllerCtx as never);
     await delay(30);
     assert.notEqual(statuses.at(-1), "🎯 complete");
+    assert.notEqual(launched[0]?.cwd, workspace);
+    assert.equal(existsSync(launched[0]?.cwd ?? ""), true);
 
     process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = "10";
     for (const handler of handlers.get("session_start") ?? []) await handler({}, controllerCtx as never);
 
     await waitForAssertion(() => assert.equal(statuses.at(-1), "🎯 complete"));
+    assert.equal(existsSync(launched[0]?.cwd ?? ""), false);
     assert.equal(existsSync(launched[1]?.cwd ?? ""), false);
     for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
   } finally {
