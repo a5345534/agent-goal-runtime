@@ -97,6 +97,23 @@ test("Pi harness subagent adapter starts a detached Pi session and sends the ini
   assert.match(prompts[0] ?? "", /create attendance doctypes/);
 });
 
+test("Pi harness subagent adapter sanitizes truncated session ids for Pi", async () => {
+  const { launcher, launches } = fakeLauncher();
+  const adapter = new PiHarnessSubagentAdapter({ launcher, now: () => new Date(now) });
+  await adapter.startSession({
+    goalId: "goal-1",
+    node: node(),
+    subagentId: `${"a".repeat(54)}-tail`,
+    cwd: "/repo/.worktrees/attendance",
+    initialPrompt: "initial",
+  });
+
+  const sessionId = launches[0]?.sessionId ?? "";
+  assert.equal(sessionId.length <= 64, true);
+  assert.match(sessionId, /^[a-zA-Z0-9](?:[a-zA-Z0-9_.-]*[a-zA-Z0-9])?$/);
+  assert.doesNotMatch(sessionId, /-$/);
+});
+
 test("Pi harness subagent adapter resumes an existing session file for follow-up prompts", async () => {
   const { launcher, launches, prompts, stopped } = fakeLauncher();
   const adapter = new PiHarnessSubagentAdapter({ launcher, now: () => new Date(now) });

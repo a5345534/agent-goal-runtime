@@ -165,7 +165,11 @@ function launchRequestForStart(request, modelArg) {
     };
 }
 function piSessionId(subagentId) {
-    return `subagent-${subagentId}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 64);
+    const normalized = `subagent-${subagentId}`
+        .replace(/[^a-zA-Z0-9_-]/g, "-")
+        .replace(/-{2,}/g, "-")
+        .replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "");
+    return normalized.slice(0, 64).replace(/[^a-zA-Z0-9]+$/g, "") || "subagent";
 }
 function sessionNameForSubagent(subagent) {
     return `subagent ${subagent.subagentId}: ${subagent.nodeId}`;
