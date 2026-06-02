@@ -1,3 +1,4 @@
+import { type GoalDagPlanNodeInput, type GoalDagPlanOptions, type GoalDagReadyQueue, type GoalDagSchedulingPolicy } from "./dag-scheduler.js";
 import { type GoalCommand } from "./parser.js";
 import type { BlockedAuditEvidence, GoalAdapterCallbacks, GoalDagNode, GoalLedgerEvent, GoalOrchestrationState, GoalReferenceResolution, GoalRuntimeConfig, GoalSessionMetadata, GoalStatusInput, GoalStore, GoalSubagentRecord, GoalSummary, GoalToolResult, WorkspaceProfile, GoalTurnStop, HiddenGoalTurnResult, TurnContext } from "./types.js";
 export declare class GoalRuntime {
@@ -29,6 +30,8 @@ export declare class GoalRuntime {
     getGoalSubagent(goalId: string, subagentId: string): Promise<GoalSubagentRecord | undefined>;
     listGoalSubagents(goalId: string, nodeId?: string): Promise<GoalSubagentRecord[]>;
     getGoalOrchestrationState(goalId: string): Promise<GoalOrchestrationState>;
+    planGoalDag(goalId: string, inputs: GoalDagPlanNodeInput[], options?: GoalDagPlanOptions): Promise<GoalDagNode[]>;
+    getGoalDagReadyQueue(goalId: string, policy?: GoalDagSchedulingPolicy): Promise<GoalDagReadyQueue>;
     resolveGoalReference(reference: string): Promise<GoalReferenceResolution>;
     saveWorkspaceProfile(profile: WorkspaceProfile): Promise<void>;
     getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;

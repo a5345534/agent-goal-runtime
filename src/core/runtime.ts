@@ -1,4 +1,12 @@
 import { randomUUID } from "node:crypto";
+import {
+  createGoalDagNodes,
+  getGoalDagReadyQueue as computeGoalDagReadyQueue,
+  type GoalDagPlanNodeInput,
+  type GoalDagPlanOptions,
+  type GoalDagReadyQueue,
+  type GoalDagSchedulingPolicy,
+} from "./dag-scheduler.js";
 import { parseGoalCommand, validateGoalObjective, type GoalCommand } from "./parser.js";
 import { renderBudgetLimitPrompt, renderContinuationPrompt, renderObjectiveUpdatedPrompt } from "./prompts.js";
 import { isAutoContinuableStatus, normalizeGoalStatus } from "./status.js";
@@ -134,6 +142,16 @@ export class GoalRuntime {
       this.store.listGoalSubagents(goalId),
     ]);
     return { goalId, nodes, subagents };
+  }
+
+  async planGoalDag(goalId: string, inputs: GoalDagPlanNodeInput[], options: GoalDagPlanOptions = {}): Promise<GoalDagNode[]> {
+    const nodes = createGoalDagNodes(goalId, inputs, options);
+    for (const node of nodes) await this.store.saveGoalDagNode(node);
+    return nodes;
+  }
+
+  async getGoalDagReadyQueue(goalId: string, policy: GoalDagSchedulingPolicy = {}): Promise<GoalDagReadyQueue> {
+    return computeGoalDagReadyQueue(await this.getGoalOrchestrationState(goalId), policy);
   }
 
   async resolveGoalReference(reference: string): Promise<GoalReferenceResolution> {

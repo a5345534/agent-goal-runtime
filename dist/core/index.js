@@ -7,4 +7,5 @@ export * from "./sqlite-store.js";
 export * from "./prompts.js";
 export * from "./runtime.js";
 export * from "./git-workspace.js";
+export * from "./dag-scheduler.js";
 //# sourceMappingURL=index.js.map

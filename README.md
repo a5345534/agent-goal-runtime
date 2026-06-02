@@ -21,11 +21,11 @@ This project provides the common framework first:
 Other agent harness bridges are intentionally out of scope for this first implementation and should be added through separate changes.
 
 The current orchestration-state slices record DAG nodes and subagent registry
-records through the portable store/runtime APIs and provide a default native Git
+records through the portable store/runtime APIs, provide a default native Git
 workspace manager that can allocate dedicated controller worktrees/branches when
-workspace and branch are omitted. They do not yet schedule DAG nodes, spawn
-harness-neutral subagents, or validate subagent self-reports; those are follow-up
-slices.
+workspace and branch are omitted, and expose deterministic DAG planning/scheduling
+helpers. They do not yet spawn harness-neutral subagents or validate subagent
+self-reports; those are follow-up slices.
 
 ## Build and test
 
@@ -45,6 +45,21 @@ node dist/cli.js --state-root /tmp/agent-goal-smoke clear
 ```
 
 The CLI is only a debug/smoke surface. Full Codex-compatible auto-continuation requires a harness adapter.
+
+## Goal DAG planning and scheduling
+
+The portable core exports deterministic DAG helpers for controller adapters:
+
+- `createGoalDagNodes()` normalizes proposed DAG node inputs into durable node
+  records,
+- `assertValidGoalDag()` / `validateGoalDag()` reject duplicate nodes, missing
+  dependencies, self-dependencies, and cycles,
+- `getGoalDagReadyQueue()` computes runnable nodes by dependency completion,
+  current subagent activity, max concurrency, and conflict hints.
+
+`GoalRuntime` wraps these through `planGoalDag()` and `getGoalDagReadyQueue()` so
+harness adapters can persist a plan, ask which nodes are schedulable, and keep
+subagent self-reports separate from controller validation.
 
 ## Native Git workspace manager
 
