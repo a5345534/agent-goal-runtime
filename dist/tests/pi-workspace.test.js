@@ -4,67 +4,26 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { parseGoalWorkspaceFlags, parseWorkspaceProfileCommand, resolveWorkspaceBinding, validateExecutionWorkspace, } from "../adapters/pi/workspace.js";
+import { parseGoalWorkspaceFlags, resolveWorkspaceBinding, validateExecutionWorkspace, } from "../adapters/pi/workspace.js";
 test("parses inline workspace and branch flags", () => {
     const parsed = parseGoalWorkspaceFlags('--workspace ./prepared --branch feat/a implement "the migration"');
     assert.deepEqual(parsed, {
         workspace: "./prepared",
         branch: "feat/a",
         ref: undefined,
-        legacySession: false,
         remainingArgs: "implement the migration",
     });
 });
-test("parses orchestration flag for workspace-bound goals", () => {
-    const parsed = parseGoalWorkspaceFlags("--orchestrate --workspace ./prepared --branch feat/a implement dag");
-    assert.deepEqual(parsed, {
-        workspace: "./prepared",
-        branch: "feat/a",
-        ref: undefined,
-        legacySession: false,
-        orchestrate: true,
-        remainingArgs: "implement dag",
-    });
-    assert.throws(() => parseGoalWorkspaceFlags("--legacy-session --orchestrate keep this local"), /cannot be combined/);
+test("removed orchestration and legacy flags fail explicitly", () => {
+    assert.throws(() => parseGoalWorkspaceFlags("--orchestrate implement dag"), /orchestrates by default/);
+    assert.throws(() => parseGoalWorkspaceFlags("--legacy-session keep this local"), /was removed/);
 });
-test("parses explicit legacy-session fallback and rejects mixed workspace binding", () => {
-    assert.deepEqual(parseGoalWorkspaceFlags("--legacy-session keep this local"), {
-        workspace: undefined,
-        branch: undefined,
-        ref: undefined,
-        legacySession: true,
-        remainingArgs: "keep this local",
-    });
-    assert.throws(() => parseGoalWorkspaceFlags("--legacy-session --workspace . keep this local"), /cannot be combined/);
-});
-test("resolves workspace profiles before paths and allows inline branch override", () => {
-    const profile = {
-        name: "migration",
-        path: "/profiles/migration",
-        kind: "git",
-        branch: "feat/profile",
-        createdAt: "2026-05-31T00:00:00.000Z",
-        updatedAt: "2026-05-31T00:00:00.000Z",
-    };
-    const resolved = resolveWorkspaceBinding({ workspace: "migration", branch: "feat/override" }, [profile], "/cwd");
+test("resolves explicit workspace paths without profile lookup", () => {
+    const resolved = resolveWorkspaceBinding({ workspace: "migration", branch: "feat/override" }, "/cwd");
     assert.deepEqual(resolved, {
-        workspace: "/profiles/migration",
+        workspace: "/cwd/migration",
         branch: "feat/override",
         ref: undefined,
-        profileName: "migration",
-    });
-});
-test("parses workspace profile add command", () => {
-    const command = parseWorkspaceProfileCommand("workspace add migration --path ./prepared --branch feat/a", "/controller");
-    assert.deepEqual(command, {
-        kind: "add",
-        profile: {
-            name: "migration",
-            path: "/controller/prepared",
-            kind: "git",
-            branch: "feat/a",
-            ref: undefined,
-        },
     });
 });
 test("validates non-git workspace without branch", () => {

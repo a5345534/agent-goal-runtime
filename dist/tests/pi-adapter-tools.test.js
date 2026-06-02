@@ -115,7 +115,7 @@ test("Pi orchestrated goal start plans DAG and launches a subagent worktree", as
     try {
         goalPiExtension(pi);
         assert.ok(commandHandler);
-        await commandHandler?.(`--orchestrate --workspace ${workspace} --branch main Implement orchestrated goal`, controllerCtx);
+        await commandHandler?.(`--workspace ${workspace} --branch main Implement orchestrated goal`, controllerCtx);
         assert.equal(launched.length, 2);
         assert.equal(launched[0]?.cwd, workspace);
         assert.match(launched[0]?.sessionName ?? "", /^goal:/);
@@ -193,7 +193,7 @@ test("Pi orchestrated goal start can auto-allocate a controller worktree", async
     try {
         goalPiExtension(pi);
         assert.ok(commandHandler);
-        await commandHandler?.("--orchestrate Implement auto workspace", controllerCtx);
+        await commandHandler?.("Implement auto workspace", controllerCtx);
         assert.equal(launched.length, 2);
         assert.notEqual(launched[0]?.cwd, workspace);
         assert.match(launched[0]?.cwd ?? "", /\.worktrees/);
@@ -210,9 +210,9 @@ test("Pi orchestrated goal start can auto-allocate a controller worktree", async
         rmSync(workspace, { recursive: true, force: true });
     }
 });
-test("Pi goal-owned session creation launches in background without replacing controller session", async () => {
+test("Pi goal start defaults to orchestration and target lifecycle commands use goal ids", async () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-session-context-"));
-    const workspace = mkdtempSync(join(tmpdir(), "goal-workspace-"));
+    const workspace = createGitWorkspace();
     const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
     process.env.AGENT_GOAL_STATE_HOME = dir;
     const goalSessionFile = join(dir, "goal-session.jsonl");
@@ -281,31 +281,27 @@ test("Pi goal-owned session creation launches in background without replacing co
     try {
         goalPiExtension(pi);
         assert.ok(commandHandler);
-        await commandHandler?.(`--workspace ${workspace} write a small story`, controllerCtx);
-        assert.equal(launched.length, 1);
+        await commandHandler?.("history abc123", controllerCtx);
+        assert.match(notifications.at(-1) ?? "", /history was removed/);
+        await commandHandler?.("workspace list", controllerCtx);
+        assert.match(notifications.at(-1) ?? "", /workspace profiles were removed/);
+        await commandHandler?.(`--workspace ${workspace} --branch main write a small story`, controllerCtx);
+        assert.equal(launched.length, 2);
         assert.equal(launched[0]?.cwd, workspace);
         assert.equal(launched[0]?.modelArg, "test/model");
-        assert.equal(prompts.length, 1);
-        assert.match(prompts[0] ?? "", /Execution workspace binding/);
+        assert.equal(prompts.length, 2);
+        assert.match(prompts[0] ?? "", /Controller orchestration session/);
         const shortId = notifications.at(-1)?.match(/\(([0-9a-f]{8})\)/)?.[1];
-        assert.match(notifications.at(-1) ?? "", /background session started/);
+        assert.match(notifications.at(-1) ?? "", /controller session started/);
         assert.ok(shortId);
-        writeFileSync(goalSessionFile, [
-            JSON.stringify({ type: "session", id: "s", cwd: workspace, timestamp: "2026-06-01T00:00:00.000Z" }),
-            JSON.stringify({ type: "message", message: { role: "user", content: "start goal" }, timestamp: "2026-06-01T00:00:01.000Z" }),
-            JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "history line" }] }, timestamp: "2026-06-01T00:00:02.000Z" }),
-        ].join("\n"));
-        await commandHandler?.(`history ${shortId}`, controllerCtx);
-        const historyMessage = sentMessages.find((message) => message.details?.kind === "goal_history");
-        assert.ok(historyMessage);
-        assert.equal(historyMessage.customType, "agent-goal-runtime");
-        assert.match(historyMessage.content ?? "", /history line/);
+        await commandHandler?.("", controllerCtx);
+        assert.match(notifications.at(-1) ?? "", new RegExp(`Goal ${shortId}`));
         await commandHandler?.(`pause ${shortId}`, controllerCtx);
         await commandHandler?.(`resume ${shortId}`, controllerCtx);
-        assert.equal(launched.length, 2);
-        assert.equal(launched[1]?.sessionFile, goalSessionFile);
-        assert.equal(prompts.length, 2);
-        assert.match(prompts[1] ?? "", /Resume working toward the active goal/);
+        assert.equal(launched.length, 3);
+        assert.equal(launched[2]?.sessionFile, goalSessionFile);
+        assert.equal(prompts.length, 3);
+        assert.match(prompts[2] ?? "", /Resume working toward the active goal/);
         for (const handler of handlers.get("session_shutdown") ?? [])
             await handler({ type: "session_shutdown", reason: "quit" });
         assert.deepEqual(stopped, []);
