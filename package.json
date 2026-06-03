@@ -2,9 +2,10 @@
   "name": "agent-goal-runtime",
   "version": "0.1.0",
   "type": "module",
-  "description": "Portable Codex-compatible /goal runtime with a Pi adapter.",
+  "description": "Portable Codex-compatible /goal runtime with Pi and OpenCode adapters.",
   "keywords": [
     "pi-package",
+    "opencode-plugin",
     "agent-goal-runtime",
     "codex-goal",
     "slash-command"
@@ -16,7 +17,13 @@
     ".": "./dist/core/index.js",
     "./pi": "./dist/adapters/pi/index.js",
     "./pi/session-store": "./dist/adapters/pi/session-store.js",
-    "./pi/workspace": "./dist/adapters/pi/workspace.js"
+    "./pi/workspace": "./dist/adapters/pi/workspace.js",
+    "./opencode": "./dist/adapters/opencode/index.js",
+    "./opencode/subagent-adapter": "./dist/adapters/opencode/subagent-adapter.js",
+    "./opencode/workspace": "./dist/adapters/opencode/workspace.js",
+    "./opencode/model-routing": "./dist/adapters/opencode/model-routing.js",
+    "./opencode/monitor": "./dist/adapters/opencode/monitor-ui.js",
+    "./opencode/closeout": "./dist/adapters/opencode/closeout.js"
   },
   "files": [
     "dist",
@@ -29,7 +36,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --test dist/tests/*.test.js",
     "check": "npm run build && npm test",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "smoke:opencode": "node -e \"import('./dist/adapters/opencode/index.js').then(m => console.log(typeof m.opencodeGoalPlugin, typeof m.OpencodeHarnessSubagentAdapter))\""
   },
   "pi": {
     "extensions": [
@@ -48,7 +56,9 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
-    "typebox": "*"
+    "@opencode-ai/plugin": "*",
+    "typebox": "*",
+    "zod": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
@@ -60,7 +70,13 @@
     "@earendil-works/pi-tui": {
       "optional": true
     },
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
     "typebox": {
+      "optional": true
+    },
+    "zod": {
       "optional": true
     }
   },

@@ -18,6 +18,9 @@ test("parses inline workspace and branch flags", () => {
     branch: "feat/a",
     ref: undefined,
     dagFile: undefined,
+    modelArg: undefined,
+    modelRoutingJson: undefined,
+    modelRoutingFile: undefined,
     remainingArgs: "implement the migration",
   });
 });
@@ -30,8 +33,34 @@ test("parses explicit DAG file flag", () => {
     branch: "feat/a",
     ref: undefined,
     dagFile: ".goal/backend.dag.json",
+    modelArg: undefined,
+    modelRoutingJson: undefined,
+    modelRoutingFile: undefined,
     remainingArgs: "--tokens 500k",
   });
+});
+
+test("parses model and model-routing flags", () => {
+  const parsed = parseGoalWorkspaceFlags('--workspace ./repo --model "openai-codex/gpt-5.5" --model-routing-file .goal/model-routing.json implement feature');
+
+  assert.deepEqual(parsed, {
+    workspace: "./repo",
+    branch: undefined,
+    ref: undefined,
+    dagFile: undefined,
+    modelArg: "openai-codex/gpt-5.5",
+    modelRoutingJson: undefined,
+    modelRoutingFile: ".goal/model-routing.json",
+    remainingArgs: "implement feature",
+  });
+});
+
+test("parses inline model-routing JSON value", () => {
+  const parsed = parseGoalWorkspaceFlags('--workspace ./repo --model-routing "{\\"controllerScenario\\":\\"controller\\"}" run');
+
+  assert.equal(parsed.modelRoutingFile, undefined);
+  assert.equal(parsed.modelRoutingJson, '{"controllerScenario":"controller"}');
+  assert.equal(parsed.remainingArgs, "run");
 });
 
 test("removed orchestration and legacy flags fail explicitly", () => {

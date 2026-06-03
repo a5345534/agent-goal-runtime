@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "add-opencode-adapter",
+  "generatedAt": "2026-06-03T08:23:57.012137+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "b114820a8e90f7ae6f15e2989c870742213f7d3ef8515b9ce042a34b069824b8"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "f89d0629eecc14ffb7b11d7470930fd4dde99658d5b3f5314b7b4fabbb9b3492"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "7ce06a4706d321533185a766178544e0c2bca72a545e26aec51d4279ef281ab2"
+    }
+  ]
+}

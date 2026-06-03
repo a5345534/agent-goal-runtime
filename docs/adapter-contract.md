@@ -78,6 +78,77 @@ The portable store contract includes goal summaries, metadata, and workspace pro
 
 Pi goal-owned sessions require explicit workspace binding unless the user opts into the explicit `--legacy-session` compatibility path. For git-backed workspaces, a branch or ref must be provided inline or by a named profile. The adapter validates paths, allowed-root policy (`AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` when configured), and git state with read-only inspection and must not create worktrees, create branches, delete workspaces, or switch branches. Legacy session-bound goals remain visible in registry output with `legacy` workspace status.
 
+## OpenCode adapter
+
+The `agent-goal-runtime/opencode` export is an `@opencode-ai/plugin`
+`Plugin` that reuses the portable core. It maps:
+
+- slash commands through a `goal_command` tool that takes the full
+  argument string and (when `ctx.tui` is available) a `/goal` slash
+  command registered through `tui.command.register`
+- model tools through `pi.registerTool`-equivalent
+  `tool.get_goal`, `tool.create_goal`, `tool.update_goal`, and
+  `tool.goal_command`
+- lifecycle events through the opencode `event` hook
+  (`session.created`, `session.idle`, `session.error`,
+  `session.compacted`)
+- same-turn post-stop tool guarding through `tool.execute.before`
+- tool-completion progress accounting through `tool.execute.after`
+- ordinary-turn active goal reminders through
+  `experimental.chat.system.transform`
+- stale hidden continuation rewriting through
+  `experimental.chat.messages.transform`
+- hidden continuation through `client.session.prompt` on the user's
+  current opencode session
+- detached `opencode serve --port 0` background processes per DAG
+  node, with the same process-group kill pattern the Pi bridge uses
+- blocked updates through transcript-aware evidence derived from
+  recent failed tool results or explicit blocked/cannot-proceed
+  assistant text in the opencode session
+- completion audit through a lightweight opencode-transcript heuristic
+  unless `AGENT_GOAL_COMPLETION_AUDIT=off` or
+  `OPENCODE_GOAL_COMPLETION_AUDIT=off`
+- progress-gated continuation by classifying task-relevant tool
+  completions
+- file-based multi-node DAG loading through `/goal --dag <path>` and
+  `parseGoalDagFileContent` (see [`goal-dag-format.md`](goal-dag-format.md))
+- model routing by scenario (controller + per-DAG-node subagent
+  selection) with the same precedence chain as the Pi bridge:
+  `--model-routing` > `--model-routing-file` >
+  `AGENT_GOAL_MODEL_ROUTING_FILE` > `AGENT_GOAL_MODEL_ROUTING_JSON` >
+  DAG file's `modelRouting` > opencode session model. The resolved
+  model is forwarded to the opencode `session.prompt` body as
+  `model: { providerID, modelID }`.
+- controller poll loop running `finalizeGoalFromDagTerminalState` +
+  `cleanupTerminalSubagentWorkspaces` when the DAG reaches a terminal
+  state, mirroring the Pi adapter's closeout path
+- text-based monitor output (since opencode owns the TUI) that
+  surfaces DAG node status, validation summary, subagent branch /
+  workspace, and self-reported notes
+
+The blocked and completion audits do not add model-visible fields to
+`update_goal`; the tool still only accepts `complete` or `blocked`.
+The adapter computes evidence out-of-band (reading the opencode
+session messages through `client.session.messages`) and passes it to
+the runtime so a first failure, mismatched recent blockers, or
+completion without task evidence cannot silently become terminal.
+
+The OpenCode adapter does **not** mirror goal snapshots into opencode
+session entries (opencode has no custom session entry surface). The
+portable SQLite store remains canonical; opencode session metadata
+stays untouched. The `executionSessionKey` used by the opencode
+adapter is `opencode:<goalId>`, so list/monitor/pause/resume/clear
+work the same way as in the Pi bridge.
+
+The OpenCode adapter uses the same `cleanupTerminalSubagentWorkspaces`
++ `finalizeGoalFromDagTerminalState` flow as the Pi adapter. When a
+DAG reaches a terminal state, the controller poll promotes the goal
+to `complete` (when every node is `complete` / `superseded`) or
+`blocked` (when any node is `blocked` / `failed`), then removes each
+subagent's native-git worktree and stops the detached opencode
+background session. The controller workspace is removed only when
+the opencode adapter auto-allocated it.
+
 ## Pi adapter status
 
 The included Pi adapter maps:

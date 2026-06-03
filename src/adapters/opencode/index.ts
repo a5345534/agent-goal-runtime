@@ -1,0 +1,83 @@
+// Public entry point for the opencode adapter.
+//
+// Default export is the opencode plugin (the `Plugin` type from
+// `@opencode-ai/plugin`). Named exports expose the harness subagent
+// adapter, the launcher test seam, and the lower-level helpers so
+// other consumers (tests, the CLI, third-party harnesses) can reuse
+// them without going through the plugin entry.
+
+export { opencodeGoalPlugin, createOpencodeGoalPluginContext, setOpencodeClientForTests, resetOpencodeClientForTests } from "./plugin.js";
+export {
+  OpencodeHarnessSubagentAdapter,
+  createOpencodeHarnessSubagentAdapter,
+  readOpencodeSubagentSessionState,
+  renderOpencodeSubagentInitialPrompt,
+  setOpencodeBackgroundSessionLauncherForTests,
+} from "./subagent-adapter.js";
+export {
+  launchOpencodeServeBackgroundSession,
+  writeOpencodeBackgroundReadyFile,
+  readOpencodeBackgroundReadyFile,
+  opencodeBackgroundRunDir,
+  opencodeBackgroundCommandPath,
+  type OpencodeBackgroundSessionHandle,
+  type OpencodeBackgroundSessionLauncher,
+  type OpencodeBackgroundSessionLaunchRequest,
+  type OpencodeBackgroundLauncherOptions,
+} from "./background-server.js";
+export {
+  parseOpencodeGoalCommand,
+  formatOpencodeGoalToolDescription,
+  stripSlashPrefix,
+  OPENCODE_GOAL_TOOL,
+  OPENCODE_GOAL_SLASH,
+  OPENCODE_GOAL_SUBCOMMAND_SET,
+  type OpencodeGoalSubcommand,
+  type OpencodeGoalSlashParse,
+} from "./slash-command.js";
+export {
+  readOpencodeSessionMessages,
+  readOpencodeSessionTranscript,
+  summariseOpencodeSession,
+  readOpencodeTokenUsage,
+  buildOpencodeCompletionEvidence,
+  type OpencodeMessage,
+  type OpencodeMessagePart,
+  type OpencodeTranscriptSnapshot,
+  type OpencodeReadOptions,
+} from "./session-transcript.js";
+export {
+  startOpencodeHiddenGoalTurn,
+  OpencodeHiddenContinuationRegistry,
+  rewriteOpencodeQueuedContinuations,
+  extractOpencodeGoalContinuationMetadata,
+  isOpencodeSessionIdleEvent,
+  isOpencodeSessionErrorEvent,
+  isOpencodeSessionCompactedEvent,
+  extractOpencodeEventSessionID,
+  OPENCODE_GOAL_CONTINUATION_MARKER,
+  type OpencodeGoalContinuationMetadata,
+} from "./hidden-continuation.js";
+export { isOpencodeCompletionAuditEnabled, opencodeHeuristicCompletionAudit } from "./completion-audit.js";
+export { buildOpencodeBlockedAuditEvidence, type OpencodeBlockedAuditOptions } from "./blocked-audit.js";
+export { createNoopOpencodeClient, isAbortError, isUnavailableError, type OpencodeClient } from "./opencode-client.js";
+export {
+  parseGoalWorkspaceFlags,
+  resolveWorkspaceBinding,
+  validateExecutionWorkspace,
+  type ResolvedWorkspaceBinding,
+  type WorkspaceValidationResult,
+} from "./workspace.js";
+export {
+  readOpencodeModelRoutingConfig,
+  resolveOpencodeControllerModel,
+  selectOpencodeSubagentModel,
+  modelArgFromOpencodeContext,
+  type OpencodeModelSelection,
+} from "./model-routing.js";
+export { renderOpencodeMonitorLines, readOpencodeGoalMonitorSnapshot, type OpencodeMonitorSnapshot, type OpencodeMonitorRendererOptions } from "./monitor-ui.js";
+export { finalizeOpencodeGoalFromDagTerminalState, formatOpencodeCloseoutDiagnostics, type OpencodeGoalCloseoutOptions, type OpencodeGoalCloseoutResult } from "./closeout.js";
+
+// Default export for `import agentGoalOpencode from 'agent-goal-runtime/opencode'`.
+import { opencodeGoalPlugin } from "./plugin.js";
+export default opencodeGoalPlugin;
