@@ -186,6 +186,7 @@ async function syncSubagents(
       const updated = await runtime.syncGoalSubagent(adapter, subagent);
       if (subagentChanged(subagent, updated)) result.synced.push(updated);
     } catch (error) {
+      if (isTransientStoreLockError(error)) continue;
       const failed = withSubagentPatch(subagent, {
         status: "failed",
         integrationStatus: error instanceof Error ? error.message : String(error),
@@ -343,6 +344,11 @@ function latestSubagentPerNode(subagents: GoalSubagentRecord[]): GoalSubagentRec
 
 function hasNonTerminalSubagentForNode(subagents: GoalSubagentRecord[], nodeId: string): boolean {
   return subagents.some((subagent) => subagent.nodeId === nodeId && NON_TERMINAL_SUBAGENT_STATUSES.has(subagent.status));
+}
+
+function isTransientStoreLockError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /database is locked|SQLITE_BUSY/i.test(message);
 }
 
 function appendValidationResults(subagent: GoalSubagentRecord, validation: GoalControllerValidationResult): GoalSubagentRecord {

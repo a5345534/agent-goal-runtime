@@ -139,6 +139,23 @@ test("controller validator failure can send a follow-up prompt instead of comple
   assert.equal((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.status, "running");
 });
 
+test("controller tick treats transient database locks as retryable sync skips", async () => {
+  const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
+  await runtime.saveGoalDagNode({ ...(await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode), status: "running", updatedAt: now });
+  await runtime.saveGoalSubagent(subagent());
+  const adapter = new FakeSubagentAdapter();
+  adapter.getSessionState = () => {
+    throw new Error("database is locked");
+  };
+
+  const tick = await runtime.runGoalControllerTick("goal-1", { adapter });
+
+  assert.equal(tick.changed, false);
+  assert.equal(tick.failed.length, 0);
+  assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
+  assert.equal((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.status, "running");
+});
+
 test("controller loop can run bounded ticks and stop when idle", async () => {
   const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature", status: "complete" }]);
   const adapter = new FakeSubagentAdapter();

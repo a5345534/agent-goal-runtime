@@ -142,7 +142,14 @@ export class SQLiteGoalStore implements GoalStore {
     this.dbPath = options.dbPath ? resolve(options.dbPath) : resolve(resolveDefaultStateRoot(options.stateRoot), "goals.sqlite");
     mkdirSync(dirname(this.dbPath), { recursive: true });
     this.db = new DatabaseSync(this.dbPath);
+    this.configureConnection();
     this.migrate();
+  }
+
+  private configureConnection(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA synchronous = NORMAL");
+    this.db.exec("PRAGMA busy_timeout = 10000");
   }
 
   async getCurrentGoal(sessionKey: string): Promise<GoalRecord | undefined> {

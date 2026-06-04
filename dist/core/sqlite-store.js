@@ -9,7 +9,13 @@ export class SQLiteGoalStore {
         this.dbPath = options.dbPath ? resolve(options.dbPath) : resolve(resolveDefaultStateRoot(options.stateRoot), "goals.sqlite");
         mkdirSync(dirname(this.dbPath), { recursive: true });
         this.db = new DatabaseSync(this.dbPath);
+        this.configureConnection();
         this.migrate();
+    }
+    configureConnection() {
+        this.db.exec("PRAGMA journal_mode = WAL");
+        this.db.exec("PRAGMA synchronous = NORMAL");
+        this.db.exec("PRAGMA busy_timeout = 10000");
     }
     async getCurrentGoal(sessionKey) {
         const row = this.db.prepare("SELECT * FROM goals WHERE session_key = ?").get(sessionKey);

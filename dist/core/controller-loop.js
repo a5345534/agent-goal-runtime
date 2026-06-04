@@ -67,6 +67,8 @@ async function syncSubagents(runtime, adapter, state, result) {
                 result.synced.push(updated);
         }
         catch (error) {
+            if (isTransientStoreLockError(error))
+                continue;
             const failed = withSubagentPatch(subagent, {
                 status: "failed",
                 integrationStatus: error instanceof Error ? error.message : String(error),
@@ -194,6 +196,10 @@ function latestSubagentPerNode(subagents) {
 }
 function hasNonTerminalSubagentForNode(subagents, nodeId) {
     return subagents.some((subagent) => subagent.nodeId === nodeId && NON_TERMINAL_SUBAGENT_STATUSES.has(subagent.status));
+}
+function isTransientStoreLockError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /database is locked|SQLITE_BUSY/i.test(message);
 }
 function appendValidationResults(subagent, validation) {
     const additions = [validation.summary, ...(validation.validationSignals ?? [])].filter((item) => Boolean(item?.trim()));

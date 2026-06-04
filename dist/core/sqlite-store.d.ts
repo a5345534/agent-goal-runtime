@@ -6,6 +6,7 @@ export declare class SQLiteGoalStore implements GoalStore {
         stateRoot?: string;
         dbPath?: string;
     });
+    private configureConnection;
     getCurrentGoal(sessionKey: string): Promise<GoalRecord | undefined>;
     saveGoal(goal: GoalRecord): Promise<void>;
     clearGoal(sessionKey: string): Promise<void>;

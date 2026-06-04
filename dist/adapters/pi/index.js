@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { GoalRuntime, NativeGitWorkspaceManager, SQLiteGoalStore, cleanupTerminalSubagentWorkspaces, createControllerValidationRunner, createNativeGitSubagentWorkspaceAllocator, parseGoalCommand, parseGoalDagFileContent, parseGoalModelRoutingConfigJson, parseTokenBudget, renderActiveGoalReminderPrompt, resolveControllerModelArg, selectModelScenarioForNode, } from "../../core/index.js";
+import { GoalRuntime, NativeGitWorkspaceManager, SQLiteGoalStore, cleanupTerminalSubagentWorkspaces, createControllerValidationRunner, createNativeGitSubagentWorkspaceAllocator, parseGoalCommand, parseGoalDagFileContent, parseGoalModelRoutingConfigJson, parseTokenBudget, renderActiveGoalReminderPrompt, resolveControllerModelArg, resolveDefaultStateRoot, selectModelScenarioForNode, } from "../../core/index.js";
 import { launchPiRpcBackgroundGoalSession, } from "./background-session.js";
 import { GoalListController } from "./goal-list-ui.js";
 import { GoalMonitorController } from "./monitor-ui.js";
@@ -496,6 +496,8 @@ function startPiGoalControllerPollingLoop(runtime, ctx, goal, binding) {
         return;
     const timer = setInterval(() => {
         void runPiGoalControllerPoll(runtime, ctx, goal, binding).catch((error) => {
+            if (isTransientStoreLockError(error))
+                return;
             safeNotify(ctx, error instanceof Error ? `Goal controller poll failed: ${error.message}` : `Goal controller poll failed: ${String(error)}`, "warning");
         });
     }, pollMs);
@@ -503,21 +505,80 @@ function startPiGoalControllerPollingLoop(runtime, ctx, goal, binding) {
     piGoalControllerPollers.set(goal.goalId, timer);
 }
 let piGoalControllerPollCount = 0;
+function isTransientStoreLockError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /database is locked|SQLITE_BUSY/i.test(message);
+}
+function acquirePiGoalControllerPollLease(goalId) {
+    const dir = path.join(resolveDefaultStateRoot(), "controller-poll-leases");
+    const leasePath = path.join(dir, `${goalId.replace(/[^a-zA-Z0-9_.-]/g, "_")}.json`);
+    const token = `${process.pid}-${Date.now()}-${randomUUID()}`;
+    const ttlMs = readPiGoalControllerLeaseMs();
+    const writePayload = () => JSON.stringify({ goalId, token, pid: process.pid, createdAt: Date.now(), expiresAt: Date.now() + ttlMs });
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    catch {
+        return undefined;
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            fs.writeFileSync(leasePath, writePayload(), { flag: "wx" });
+            return { path: leasePath, token };
+        }
+        catch (error) {
+            const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
+            if (code !== "EEXIST")
+                return undefined;
+            if (!isStalePiGoalControllerPollLease(leasePath))
+                return undefined;
+            try {
+                fs.unlinkSync(leasePath);
+            }
+            catch {
+                return undefined;
+            }
+        }
+    }
+    return undefined;
+}
+function isStalePiGoalControllerPollLease(leasePath) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(leasePath, "utf8"));
+        return typeof parsed.expiresAt === "number" && parsed.expiresAt <= Date.now();
+    }
+    catch {
+        return true;
+    }
+}
+function releasePiGoalControllerPollLease(lease) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(lease.path, "utf8"));
+        if (parsed.token === lease.token)
+            fs.unlinkSync(lease.path);
+    }
+    catch {
+        // Best effort; stale leases expire automatically.
+    }
+}
 async function runPiGoalControllerPoll(runtime, ctx, goal, binding) {
     if (piGoalControllerPollsInFlight.has(goal.goalId))
         return;
-    // If the goal is no longer active, stop polling and release its resources.
-    const summary = (await runtime.listGoalSummaries()).find((s) => s.goalId === goal.goalId);
-    if (!summary || summary.status !== "active") {
-        stopPiGoalControllerPollingLoop(goal.goalId);
-        cleanupPiGoalControllerAdapter(goal.goalId);
-        const handle = backgroundGoalSessions.get(goal.goalId);
-        handle?.stop();
-        backgroundGoalSessions.delete(goal.goalId);
+    const lease = acquirePiGoalControllerPollLease(goal.goalId);
+    if (!lease)
         return;
-    }
     piGoalControllerPollsInFlight.add(goal.goalId);
     try {
+        // If the goal is no longer active, stop polling and release its resources.
+        const summary = (await runtime.listGoalSummaries()).find((s) => s.goalId === goal.goalId);
+        if (!summary || summary.status !== "active") {
+            stopPiGoalControllerPollingLoop(goal.goalId);
+            cleanupPiGoalControllerAdapter(goal.goalId);
+            const handle = backgroundGoalSessions.get(goal.goalId);
+            handle?.stop();
+            backgroundGoalSessions.delete(goal.goalId);
+            return;
+        }
         if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) {
             stopPiGoalControllerPollingLoop(goal.goalId);
             return;
@@ -528,6 +589,7 @@ async function runPiGoalControllerPoll(runtime, ctx, goal, binding) {
     }
     finally {
         piGoalControllerPollsInFlight.delete(goal.goalId);
+        releasePiGoalControllerPollLease(lease);
     }
     // Periodic ledger pruning to prevent unbounded growth.
     piGoalControllerPollCount += 1;
@@ -638,6 +700,15 @@ function readPiGoalControllerPollMs() {
         return 5_000;
     const parsed = Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
+}
+function readPiGoalControllerLeaseMs() {
+    const raw = process.env.AGENT_GOAL_PI_CONTROLLER_LEASE_MS;
+    if (raw) {
+        const parsed = Number.parseInt(raw, 10);
+        if (Number.isFinite(parsed) && parsed > 0)
+            return parsed;
+    }
+    return Math.max(120_000, readPiGoalControllerPollMs() * 30);
 }
 function readPiGoalRunValidators() {
     const raw = process.env.AGENT_GOAL_PI_RUN_VALIDATORS ?? process.env.PI_GOAL_RUN_VALIDATORS;
