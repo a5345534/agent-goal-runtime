@@ -18,7 +18,8 @@ export function runControllerValidation(request, options = {}) {
     }
     const failedCommands = result.commandResults.filter((item) => !item.ok);
     const validationSignals = buildValidationSignals(result);
-    const ok = result.missingOutputs.length === 0 && failedCommands.length === 0;
+    const skippedValidatorsBlockPass = result.skippedValidators.length > 0 && !options.allowSkippedValidators;
+    const ok = result.missingOutputs.length === 0 && failedCommands.length === 0 && !skippedValidatorsBlockPass;
     if (ok) {
         const skippedSuffix = result.skippedValidators.length ? `; skipped ${result.skippedValidators.length} validator(s) by policy` : "";
         return {
@@ -30,6 +31,7 @@ export function runControllerValidation(request, options = {}) {
     const summaryParts = [
         result.missingOutputs.length ? `missing outputs: ${result.missingOutputs.join(", ")}` : undefined,
         failedCommands.length ? `failed validators: ${failedCommands.map((item) => item.command).join(", ")}` : undefined,
+        skippedValidatorsBlockPass ? `skipped validators require AGENT_GOAL_PI_RUN_VALIDATORS=1 or an explicit host allow policy: ${result.skippedValidators.join(", ")}` : undefined,
     ].filter((item) => Boolean(item));
     return {
         status: "failed",
@@ -79,6 +81,7 @@ function defaultFollowupPrompt(request, result) {
         `Controller validation for DAG node ${request.node.nodeId} did not pass.`,
         result.missingOutputs.length ? `Create or fix the missing expected outputs: ${result.missingOutputs.join(", ")}.` : undefined,
         failedCommands.length ? `Fix the failing validators: ${failedCommands.map((item) => item.command).join(", ")}.` : undefined,
+        result.skippedValidators.length ? "Controller validators were configured but not executed by host policy; ask the controller operator to reload Pi with AGENT_GOAL_PI_RUN_VALIDATORS=1 before accepting completion." : undefined,
         "After addressing the issues, report again with SUBAGENT_RESULT: <summary>.",
     ].filter((line) => Boolean(line)).join("\n");
 }

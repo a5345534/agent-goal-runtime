@@ -6,6 +6,11 @@ export interface ControllerValidationRunnerOptions {
     maxCommandOutputChars?: number;
     /** Build a follow-up prompt for failed validation. */
     renderFollowupPrompt?: (request: GoalControllerValidationRequest, result: ControllerValidationRunResult) => string;
+    /**
+     * Allow configured validators to be skipped while still passing validation.
+     * Defaults false so a node that declares validators cannot pass on self-report alone.
+     */
+    allowSkippedValidators?: boolean;
 }
 export interface ControllerValidationCommandResult {
     command: string;

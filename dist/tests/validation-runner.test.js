@@ -36,7 +36,7 @@ function request(overrides = {}) {
         ...overrides,
     };
 }
-test("controller validation runner passes expected outputs and skipped validators by policy", () => {
+test("controller validation runner fails skipped validators by default", () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-validation-"));
     try {
         writeFileSync(join(dir, "README.md"), "ok\n");
@@ -44,9 +44,25 @@ test("controller validation runner passes expected outputs and skipped validator
             node: { ...request().node, expectedOutputs: ["README.md"], validators: ["npm test"] },
             subagent: { ...request().subagent, workspacePath: dir },
         }), { executeValidators: false });
+        assert.equal(result.status, "failed");
+        assert.match(result.summary ?? "", /skipped validators require AGENT_GOAL_PI_RUN_VALIDATORS=1/);
+        assert.match(result.followupPrompt ?? "", /AGENT_GOAL_PI_RUN_VALIDATORS=1/);
+        assert.deepEqual(result.validationSignals, ["skipped validator by policy: npm test"]);
+    }
+    finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+test("controller validation runner can explicitly allow skipped validators", () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-validation-"));
+    try {
+        writeFileSync(join(dir, "README.md"), "ok\n");
+        const result = runControllerValidation(request({
+            node: { ...request().node, expectedOutputs: ["README.md"], validators: ["npm test"] },
+            subagent: { ...request().subagent, workspacePath: dir },
+        }), { executeValidators: false, allowSkippedValidators: true });
         assert.equal(result.status, "passed");
         assert.match(result.summary ?? "", /skipped 1 validator/);
-        assert.deepEqual(result.validationSignals, ["skipped validator by policy: npm test"]);
     }
     finally {
         rmSync(dir, { recursive: true, force: true });
