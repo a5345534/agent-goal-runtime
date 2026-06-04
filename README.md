@@ -1,6 +1,6 @@
 # agent-goal-runtime
 
-Portable Codex-compatible `/goal` runtime with a Pi bridge.
+Portable Codex-compatible `/goal` runtime with Pi and OpenCode bridges.
 
 This project provides the common framework first:
 
@@ -244,3 +244,79 @@ Every goal store now also records a durable ledger of lifecycle and execution ev
 ## Pi token accounting
 
 The portable runtime accepts normalized token snapshots. The Pi adapter normalizes completed assistant usage as `input + output` when those channels are present and excludes provider cache accounting channels such as `cacheRead` / `cacheWrite` from goal budget usage. If a Pi/bridged usage object lacks input/output channels but exposes a finite positive `totalTokens`, the adapter uses that as a fallback. The core runtime still computes deltas and transitions goals to `budgetLimited` when the normalized total reaches the configured budget.
+
+## OpenCode bridge
+
+The package also exports a compiled OpenCode plugin. The plugin reuses
+the same portable runtime the Pi bridge uses, so the Codex-compatible
+`get_goal`, `create_goal`, `update_goal` tools and the orchestrating
+`/goal` workflow work the same way inside OpenCode TUI and server
+modes.
+
+The opencode adapter is loaded by OpenCode's plugin system (it is
+*not* auto-installed by `npm install`). After publishing the package,
+install the pinned release into the user's opencode config with:
+
+```bash
+opencode plugin install github:a5345534/agent-goal-runtime@v0.1.0
+# or for a local development build:
+opencode plugin install /home/shawn/projects/active/agent-goal-runtime
+```
+
+The adapter is reachable from a built checkout through:
+
+```bash
+node -e "import('./dist/adapters/opencode/index.js').then(m => console.log(typeof m.opencodeGoalPlugin))"
+# function
+```
+
+The plugin registers the same three Codex-compatible model tools
+(`get_goal`, `create_goal`, `update_goal`) plus a `goal_command` tool
+that takes the full `/goal <args>` string. In TUI mode the plugin also
+registers a `/goal` slash command that prompts for input and forwards
+it to the same handler. Outside TUI mode, the model invokes the
+`goal_command` tool.
+
+| Command / tool | Purpose |
+| --- | --- |
+| `/goal` | Show the current goal (delegates to `get_goal`). |
+| `/goal <objective>` | Start an orchestrated goal (same `--workspace` / `--branch` / `--ref` / `--tokens` flags the Pi bridge accepts). |
+| `/goal --dag <path>` | Start an orchestrated goal whose objective + DAG come from a JSON DAG file (see [`docs/goal-dag-format.md`](docs/goal-dag-format.md)). |
+| `/goal --model <provider/model>` | Override the controller model inline. |
+| `/goal --model-routing '<json>'` | Inline model-routing config (same schema as the Pi bridge). |
+| `/goal --model-routing-file <path>` | Load model-routing config from a file. |
+| `/goal list` | List recent opencode goals. |
+| `/goal status [goal-ref]` | Show DAG, subagent, and validation summary for the goal. |
+| `/goal monitor [goal-ref]` | Render a text-based monitor with per-node status, validation summary, subagent branch / workspace, and self-reported notes. |
+| `/goal pause / resume / clear [goal-ref]` | Lifecycle operations, resolved by short goal id when supplied. |
+| `/goal edit / budget [goal-ref] <value>` | Objective and token-budget edits. |
+| `get_goal` | Model-visible: returns the current opencode goal, status, budget, usage, and elapsed time. |
+| `create_goal` | Model-visible Codex-compatible create. |
+| `update_goal` | Model-visible Codex-compatible complete/blocked, with the same audit gates the Pi bridge enforces. |
+| `goal_command` | Tool counterpart of `/goal` so non-TUI modes can run goal commands. |
+
+The bridge is intentionally close to the Pi bridge: hidden
+continuation uses the same `<agent_goal_continuation>` markers
+rewritten through `experimental.chat.messages.transform`; the post-stop
+tool guard uses `tool.execute.before`; completion audits are off by
+default and toggled through the same `AGENT_GOAL_COMPLETION_AUDIT` env
+var; the subagent adapter spawns detached `opencode serve --port 0`
+background processes per DAG node in dedicated worktrees, mirroring
+the Pi bridge's detached-child pattern.
+
+The controller poll loop also calls the portable runtime's
+`finalizeGoalFromDagTerminalState` when the DAG reaches a terminal
+state, then runs `cleanupTerminalSubagentWorkspaces` to remove each
+subagent's native-git worktree and shuts down the detached opencode
+background session. `AGENT_GOAL_OPENCODE_CONTROLLER_POLL_MS=0` disables
+controller polling. `AGENT_GOAL_OPENCODE_RUN_VALIDATORS=1` lets the
+controller execute shell validators instead of only checking expected
+outputs. Set `AGENT_GOAL_ALLOWED_WORKSPACE_ROOTS` to a colon-separated
+list of allowed roots to restrict eligible execution workspaces.
+
+The model-routing precedence chain is identical to the Pi bridge:
+`--model-routing` > `--model-routing-file` > `AGENT_GOAL_MODEL_ROUTING_FILE`
+> `AGENT_GOAL_MODEL_ROUTING_JSON` > DAG file's `modelRouting` > the
+opencode session's current model. The controller and each subagent
+node receive a `model: { providerID, modelID }` body on the opencode
+`session.prompt` call when a model is resolved.

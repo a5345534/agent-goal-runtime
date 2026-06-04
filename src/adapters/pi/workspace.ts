@@ -8,6 +8,9 @@ export interface GoalWorkspaceFlags {
   branch?: string;
   ref?: string;
   dagFile?: string;
+  modelArg?: string;
+  modelRoutingJson?: string;
+  modelRoutingFile?: string;
   remainingArgs: string;
 }
 
@@ -38,6 +41,9 @@ export function parseGoalWorkspaceFlags(args: string): GoalWorkspaceFlags {
   let branch: string | undefined;
   let ref: string | undefined;
   let dagFile: string | undefined;
+  let modelArg: string | undefined;
+  let modelRoutingJson: string | undefined;
+  let modelRoutingFile: string | undefined;
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
@@ -57,13 +63,25 @@ export function parseGoalWorkspaceFlags(args: string): GoalWorkspaceFlags {
       dagFile = requireFlagValue(tokens, ++index, "--dag");
       continue;
     }
+    if (token === "--model") {
+      modelArg = requireFlagValue(tokens, ++index, "--model");
+      continue;
+    }
+    if (token === "--model-routing") {
+      modelRoutingJson = requireFlagValue(tokens, ++index, "--model-routing");
+      continue;
+    }
+    if (token === "--model-routing-file") {
+      modelRoutingFile = requireFlagValue(tokens, ++index, "--model-routing-file");
+      continue;
+    }
     if (token === "--legacy-session") throw new Error("--legacy-session was removed; /goal always creates an orchestrated goal-owned session.");
     if (token === "--orchestrate") throw new Error("--orchestrate was removed; /goal <objective> orchestrates by default.");
     remaining.push(token);
   }
 
   if (branch && ref) throw new Error("only one of --branch or --ref may be supplied");
-  return { workspace, branch, ref, dagFile, remainingArgs: remaining.join(" ") };
+  return { workspace, branch, ref, dagFile, modelArg, modelRoutingJson, modelRoutingFile, remainingArgs: remaining.join(" ") };
 }
 
 export function resolveWorkspaceBinding(
