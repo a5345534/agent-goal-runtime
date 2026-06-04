@@ -703,7 +703,10 @@ test("Pi goal start defaults to orchestration and target lifecycle commands use 
     assert.equal(prompts.length, 2);
     assert.match(prompts[1] ?? "", /Resume working toward the active goal/);
     for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
-    assert.deepEqual(stopped, []);
+    // Session shutdown cleans up all lingering background sessions (controller + subagent adapter handles).
+    assert.ok(stopped.length >= 2, `expected at least 2 stopped handles, got ${stopped.length}: ${JSON.stringify(stopped)}`);
+    assert.ok(stopped.some((s) => s === "resumed-session"), "expected resumed-session to be stopped");
+    assert.ok(stopped.some((s) => s.startsWith("subagent-")), "expected subagent handle to be stopped");
   } finally {
     setPiBackgroundGoalSessionLauncherForTests();
     if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;

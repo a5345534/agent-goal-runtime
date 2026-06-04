@@ -124,6 +124,9 @@ export class PiSessionGoalMirrorStore {
             this.mirror({ version: 1, kind: "workspace_profile_removed", name, at: this.nowIso() });
         return deleted;
     }
+    async pruneLedgerEvents(goalId, options) {
+        return this.primary.pruneLedgerEvents?.(goalId, options) ?? 0;
+    }
     close() {
         return this.primary.close?.();
     }

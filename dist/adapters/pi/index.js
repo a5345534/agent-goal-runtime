@@ -21,8 +21,13 @@ const POST_STOP_ALLOWED_TOOL_SET = new Set(["get_goal", "read", "grep", "find", 
 const MEANINGFUL_PROGRESS_TOOL_SET = new Set(["write", "edit", "bash", "read", "grep", "find", "ls"]);
 let backgroundGoalSessionLauncher = launchPiRpcBackgroundGoalSession;
 const backgroundGoalSessions = new Map();
+const piGoalControllerAdapters = new Map();
 const piGoalControllerPollers = new Map();
 const piGoalControllerPollsInFlight = new Set();
+const startedAttempts = new Map();
+const STARTED_ATTEMPT_TTL_MS = 30 * 60_000;
+const LEDGER_MAX_EVENTS_PER_GOAL = 5_000;
+const LEDGER_PRUNE_INTERVAL_POLLS = 20;
 export { PiHarnessSubagentAdapter, createPiHarnessSubagentAdapter, readPiSubagentSessionState, renderPiSubagentInitialPrompt } from "./subagent-adapter.js";
 export function setPiBackgroundGoalSessionLauncherForTests(launcher) {
     backgroundGoalSessionLauncher = launcher ?? launchPiRpcBackgroundGoalSession;
@@ -31,7 +36,6 @@ export default function goalPiExtension(pi) {
     const store = new PiSessionGoalMirrorStore(new SQLiteGoalStore(), (data) => pi.appendEntry(PI_GOAL_SESSION_ENTRY_TYPE, data));
     let lastCtx;
     let staleContinuationAbortPending;
-    const startedAttempts = new Map();
     const runtime = new GoalRuntime({
         store,
         callbacks: {
@@ -217,6 +221,8 @@ export default function goalPiExtension(pi) {
         lastCtx = ctx;
         const sessionKey = resolveSessionKey(ctx);
         const tokenUsage = readTokenUsage(ctx);
+        // Prune stale continuation attempt entries that accumulate over long sessions.
+        cleanupExpiredStartedAttempts();
         if (isFailedAssistantTurn(event.message)) {
             if (staleContinuationAbortPending) {
                 staleContinuationAbortPending = undefined;
@@ -239,6 +245,9 @@ export default function goalPiExtension(pi) {
     });
     pi.on("session_shutdown", async (event) => {
         stopAllPiGoalControllerPollingLoops();
+        cleanupAllPiGoalControllerAdapters();
+        cleanupAllBackgroundGoalSessions();
+        cleanupExpiredStartedAttempts();
         if (shouldCloseStoreOnSessionShutdown(event))
             await store.close?.();
     });
@@ -402,10 +411,36 @@ async function runPiGoalControllerLoopForGoal(runtime, ctx, goal, binding, model
         startedSubagentCount: loop.ticks.reduce((count, tick) => count + tick.started.length, 0),
     };
 }
+function getOrCreatePiGoalControllerAdapter(goalId, fallbackModelArg) {
+    let adapter = piGoalControllerAdapters.get(goalId);
+    if (!adapter) {
+        adapter = new PiHarnessSubagentAdapter({ launcher: backgroundGoalSessionLauncher, modelArg: fallbackModelArg });
+        piGoalControllerAdapters.set(goalId, adapter);
+    }
+    return adapter;
+}
+function cleanupPiGoalControllerAdapter(goalId) {
+    const adapter = piGoalControllerAdapters.get(goalId);
+    if (!adapter)
+        return;
+    adapter.abortAll();
+    piGoalControllerAdapters.delete(goalId);
+}
+function cleanupAllPiGoalControllerAdapters() {
+    for (const [goalId] of piGoalControllerAdapters) {
+        cleanupPiGoalControllerAdapter(goalId);
+    }
+}
+function cleanupAllBackgroundGoalSessions() {
+    for (const [goalId, handle] of backgroundGoalSessions) {
+        handle.stop();
+        backgroundGoalSessions.delete(goalId);
+    }
+}
 function buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting = readPiGoalModelRoutingConfig()) {
     const workspaceManager = new NativeGitWorkspaceManager({ defaultBaseRef: binding.branch ?? binding.ref, fetch: false });
     const fallbackModelArg = modelArgFromContext(ctx);
-    const adapter = new PiHarnessSubagentAdapter({ launcher: backgroundGoalSessionLauncher, modelArg: fallbackModelArg });
+    const adapter = getOrCreatePiGoalControllerAdapter(goal.goalId, fallbackModelArg);
     const allocator = createNativeGitSubagentWorkspaceAllocator(workspaceManager, {
         controllerWorkspacePath: binding.workspace,
         baseRef: binding.branch ?? binding.ref,
@@ -467,9 +502,20 @@ function startPiGoalControllerPollingLoop(runtime, ctx, goal, binding) {
     timer.unref?.();
     piGoalControllerPollers.set(goal.goalId, timer);
 }
+let piGoalControllerPollCount = 0;
 async function runPiGoalControllerPoll(runtime, ctx, goal, binding) {
     if (piGoalControllerPollsInFlight.has(goal.goalId))
         return;
+    // If the goal is no longer active, stop polling and release its resources.
+    const summary = (await runtime.listGoalSummaries()).find((s) => s.goalId === goal.goalId);
+    if (!summary || summary.status !== "active") {
+        stopPiGoalControllerPollingLoop(goal.goalId);
+        cleanupPiGoalControllerAdapter(goal.goalId);
+        const handle = backgroundGoalSessions.get(goal.goalId);
+        handle?.stop();
+        backgroundGoalSessions.delete(goal.goalId);
+        return;
+    }
     piGoalControllerPollsInFlight.add(goal.goalId);
     try {
         if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) {
@@ -482,6 +528,11 @@ async function runPiGoalControllerPoll(runtime, ctx, goal, binding) {
     }
     finally {
         piGoalControllerPollsInFlight.delete(goal.goalId);
+    }
+    // Periodic ledger pruning to prevent unbounded growth.
+    piGoalControllerPollCount += 1;
+    if (piGoalControllerPollCount % LEDGER_PRUNE_INTERVAL_POLLS === 0) {
+        void prunePiGoalLedgerIfNeeded(runtime, goal.goalId).catch(() => undefined);
     }
 }
 async function finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goalId, binding) {
@@ -496,6 +547,7 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goalId, bindi
         if (cleanupErrors.length > 0) {
             safeNotify(ctx, `Goal ${goalId.slice(0, 8)} completed but ${cleanupErrors.length} subagent workspace cleanup(s) failed: ${cleanupErrors.map((item) => item.error ?? item.subagentId).join("; ")}`, "warning");
         }
+        cleanupPiGoalControllerAdapter(goalId);
         const handle = backgroundGoalSessions.get(goalId);
         handle?.stop();
         backgroundGoalSessions.delete(goalId);
@@ -522,6 +574,25 @@ function isAutoAllocatedPiControllerWorkspace(binding) {
     return Boolean(binding.branch?.startsWith("goal/goal-") &&
         path.basename(normalized).startsWith("goal-") &&
         normalized.includes(`${path.sep}.worktrees${path.sep}`));
+}
+function cleanupExpiredStartedAttempts() {
+    if (startedAttempts.size <= 50)
+        return;
+    const entries = [...startedAttempts.entries()];
+    const removeCount = Math.floor(entries.length / 2);
+    for (let i = 0; i < removeCount; i += 1) {
+        const [key] = entries[i] ?? [];
+        if (key)
+            startedAttempts.delete(key);
+    }
+}
+async function prunePiGoalLedgerIfNeeded(runtime, goalId) {
+    try {
+        await runtime.pruneLedgerEvents(goalId, { maxEvents: LEDGER_MAX_EVENTS_PER_GOAL });
+    }
+    catch {
+        // Best-effort; must not disrupt controller polling.
+    }
 }
 async function resumePiGoalControllerPollingLoops(runtime, ctx) {
     if (readPiGoalControllerPollMs() <= 0)

@@ -61,6 +61,9 @@ export class GoalRuntime {
     async listLedgerEvents(sessionKey, goalId) {
         return this.store.listLedgerEvents(sessionKey, goalId);
     }
+    async pruneLedgerEvents(goalId, options) {
+        return this.store.pruneLedgerEvents?.(goalId, options) ?? 0;
+    }
     async saveGoalSessionMetadata(metadata) {
         await this.store.saveGoalSessionMetadata(metadata);
     }

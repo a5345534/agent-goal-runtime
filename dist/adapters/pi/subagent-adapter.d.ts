@@ -21,6 +21,8 @@ export declare class PiHarnessSubagentAdapter implements HarnessSubagentAdapter 
     sendPrompt(request: HarnessSubagentPromptRequest): Promise<void>;
     getSessionState(request: HarnessSubagentStateRequest): HarnessSubagentSessionState;
     abortSession(request: HarnessSubagentAbortRequest): Promise<void>;
+    /** Stop all tracked subagent background sessions and clear the handle map. */
+    abortAll(): void;
     private launchForExistingSubagent;
     private rememberHandle;
     private stopExistingHandle;

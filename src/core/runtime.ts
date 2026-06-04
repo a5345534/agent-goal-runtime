@@ -136,6 +136,10 @@ export class GoalRuntime {
     return this.store.listLedgerEvents(sessionKey, goalId);
   }
 
+  async pruneLedgerEvents(goalId: string, options: { maxEvents: number }): Promise<number> {
+    return this.store.pruneLedgerEvents?.(goalId, options) ?? 0;
+  }
+
   async saveGoalSessionMetadata(metadata: GoalSessionMetadata): Promise<void> {
     await this.store.saveGoalSessionMetadata(metadata);
   }

@@ -129,6 +129,15 @@ export class MemoryGoalStore implements GoalStore {
   async deleteWorkspaceProfile(name: string): Promise<boolean> {
     return this.profiles.delete(name);
   }
+
+  async pruneLedgerEvents(goalId: string, options: { maxEvents: number }): Promise<number> {
+    const goalEvents = this.ledger.filter((event) => event.goalId === goalId);
+    if (goalEvents.length <= options.maxEvents) return 0;
+    const excess = goalEvents.length - options.maxEvents;
+    const toRemove = new Set(goalEvents.slice(0, excess).map((event) => event.eventId));
+    this.ledger = this.ledger.filter((event) => !toRemove.has(event.eventId));
+    return excess;
+  }
 }
 
 function dagNodeKey(goalId: string, nodeId: string): string {

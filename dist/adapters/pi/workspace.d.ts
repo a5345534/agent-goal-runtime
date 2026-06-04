@@ -4,6 +4,9 @@ export interface GoalWorkspaceFlags {
     branch?: string;
     ref?: string;
     dagFile?: string;
+    modelArg?: string;
+    modelRoutingJson?: string;
+    modelRoutingFile?: string;
     remainingArgs: string;
 }
 export interface ResolvedWorkspaceBinding {

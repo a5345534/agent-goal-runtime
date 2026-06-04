@@ -236,6 +236,17 @@ export class SQLiteGoalStore {
         const result = this.db.prepare("DELETE FROM workspace_profiles WHERE name = ?").run(name);
         return Number(result.changes ?? 0) > 0;
     }
+    async pruneLedgerEvents(goalId, options) {
+        const countRow = this.db.prepare("SELECT COUNT(*) AS cnt FROM goal_ledger WHERE goal_id = ?").get(goalId);
+        const total = countRow?.cnt ?? 0;
+        if (total <= options.maxEvents)
+            return 0;
+        const excess = total - options.maxEvents;
+        const result = this.db.prepare(`DELETE FROM goal_ledger WHERE id IN (
+        SELECT id FROM goal_ledger WHERE goal_id = ? ORDER BY id ASC LIMIT ?
+      )`).run(goalId, excess);
+        return Number(result.changes ?? 0);
+    }
     close() {
         this.db.close();
     }

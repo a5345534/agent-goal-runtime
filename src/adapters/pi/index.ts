@@ -58,8 +58,13 @@ const POST_STOP_ALLOWED_TOOL_SET = new Set(["get_goal", "read", "grep", "find", 
 const MEANINGFUL_PROGRESS_TOOL_SET = new Set(["write", "edit", "bash", "read", "grep", "find", "ls"]);
 let backgroundGoalSessionLauncher: BackgroundGoalSessionLauncher = launchPiRpcBackgroundGoalSession;
 const backgroundGoalSessions = new Map<string, BackgroundGoalSessionHandle>();
+const piGoalControllerAdapters = new Map<string, PiHarnessSubagentAdapter>();
 const piGoalControllerPollers = new Map<string, ReturnType<typeof setInterval>>();
 const piGoalControllerPollsInFlight = new Set<string>();
+const startedAttempts = new Map<string, string | undefined>();
+const STARTED_ATTEMPT_TTL_MS = 30 * 60_000;
+const LEDGER_MAX_EVENTS_PER_GOAL = 5_000;
+const LEDGER_PRUNE_INTERVAL_POLLS = 20;
 
 export type { BackgroundGoalSessionHandle, BackgroundGoalSessionLauncher, BackgroundGoalSessionLaunchRequest } from "./background-session.js";
 export { PiHarnessSubagentAdapter, createPiHarnessSubagentAdapter, readPiSubagentSessionState, renderPiSubagentInitialPrompt } from "./subagent-adapter.js";
@@ -75,7 +80,6 @@ export default function goalPiExtension(pi: ExtensionAPI) {
   );
   let lastCtx: ExtensionContext | ExtensionCommandContext | undefined;
   let staleContinuationAbortPending: GoalContinuationMetadata | undefined;
-  const startedAttempts = new Map<string, string | undefined>();
 
   const runtime = new GoalRuntime({
     store,
@@ -278,6 +282,9 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     const sessionKey = resolveSessionKey(ctx);
     const tokenUsage = readTokenUsage(ctx);
 
+    // Prune stale continuation attempt entries that accumulate over long sessions.
+    cleanupExpiredStartedAttempts();
+
     if (isFailedAssistantTurn(event.message)) {
       if (staleContinuationAbortPending) {
         staleContinuationAbortPending = undefined;
@@ -301,6 +308,9 @@ export default function goalPiExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (event?: { reason?: string }) => {
     stopAllPiGoalControllerPollingLoops();
+    cleanupAllPiGoalControllerAdapters();
+    cleanupAllBackgroundGoalSessions();
+    cleanupExpiredStartedAttempts();
     if (shouldCloseStoreOnSessionShutdown(event)) await store.close?.();
   });
 }
@@ -496,6 +506,35 @@ async function runPiGoalControllerLoopForGoal(
   };
 }
 
+function getOrCreatePiGoalControllerAdapter(goalId: string, fallbackModelArg: string | undefined): PiHarnessSubagentAdapter {
+  let adapter = piGoalControllerAdapters.get(goalId);
+  if (!adapter) {
+    adapter = new PiHarnessSubagentAdapter({ launcher: backgroundGoalSessionLauncher, modelArg: fallbackModelArg });
+    piGoalControllerAdapters.set(goalId, adapter);
+  }
+  return adapter;
+}
+
+function cleanupPiGoalControllerAdapter(goalId: string): void {
+  const adapter = piGoalControllerAdapters.get(goalId);
+  if (!adapter) return;
+  adapter.abortAll();
+  piGoalControllerAdapters.delete(goalId);
+}
+
+function cleanupAllPiGoalControllerAdapters(): void {
+  for (const [goalId] of piGoalControllerAdapters) {
+    cleanupPiGoalControllerAdapter(goalId);
+  }
+}
+
+function cleanupAllBackgroundGoalSessions(): void {
+  for (const [goalId, handle] of backgroundGoalSessions) {
+    handle.stop();
+    backgroundGoalSessions.delete(goalId);
+  }
+}
+
 function buildPiGoalControllerLoopOptions(
   ctx: ExtensionContext | ExtensionCommandContext,
   goal: Pick<GoalRecord, "goalId">,
@@ -504,7 +543,7 @@ function buildPiGoalControllerLoopOptions(
 ): Parameters<GoalRuntime["runGoalControllerLoop"]>[1] {
   const workspaceManager = new NativeGitWorkspaceManager({ defaultBaseRef: binding.branch ?? binding.ref, fetch: false });
   const fallbackModelArg = modelArgFromContext(ctx);
-  const adapter = new PiHarnessSubagentAdapter({ launcher: backgroundGoalSessionLauncher, modelArg: fallbackModelArg });
+  const adapter = getOrCreatePiGoalControllerAdapter(goal.goalId, fallbackModelArg);
   const allocator = createNativeGitSubagentWorkspaceAllocator(workspaceManager, {
     controllerWorkspacePath: binding.workspace,
     baseRef: binding.branch ?? binding.ref,
@@ -577,6 +616,8 @@ function startPiGoalControllerPollingLoop(
   piGoalControllerPollers.set(goal.goalId, timer);
 }
 
+let piGoalControllerPollCount = 0;
+
 async function runPiGoalControllerPoll(
   runtime: GoalRuntime,
   ctx: ExtensionContext | ExtensionCommandContext,
@@ -584,6 +625,18 @@ async function runPiGoalControllerPoll(
   binding: ResolvedWorkspaceBinding,
 ): Promise<void> {
   if (piGoalControllerPollsInFlight.has(goal.goalId)) return;
+
+  // If the goal is no longer active, stop polling and release its resources.
+  const summary = (await runtime.listGoalSummaries()).find((s) => s.goalId === goal.goalId);
+  if (!summary || summary.status !== "active") {
+    stopPiGoalControllerPollingLoop(goal.goalId);
+    cleanupPiGoalControllerAdapter(goal.goalId);
+    const handle = backgroundGoalSessions.get(goal.goalId);
+    handle?.stop();
+    backgroundGoalSessions.delete(goal.goalId);
+    return;
+  }
+
   piGoalControllerPollsInFlight.add(goal.goalId);
   try {
     if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) {
@@ -594,6 +647,12 @@ async function runPiGoalControllerPoll(
     if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) stopPiGoalControllerPollingLoop(goal.goalId);
   } finally {
     piGoalControllerPollsInFlight.delete(goal.goalId);
+  }
+
+  // Periodic ledger pruning to prevent unbounded growth.
+  piGoalControllerPollCount += 1;
+  if (piGoalControllerPollCount % LEDGER_PRUNE_INTERVAL_POLLS === 0) {
+    void prunePiGoalLedgerIfNeeded(runtime, goal.goalId).catch(() => undefined);
   }
 }
 
@@ -618,6 +677,7 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
         "warning",
       );
     }
+    cleanupPiGoalControllerAdapter(goalId);
     const handle = backgroundGoalSessions.get(goalId);
     handle?.stop();
     backgroundGoalSessions.delete(goalId);
@@ -647,6 +707,24 @@ function isAutoAllocatedPiControllerWorkspace(binding: ResolvedWorkspaceBinding)
     path.basename(normalized).startsWith("goal-") &&
     normalized.includes(`${path.sep}.worktrees${path.sep}`)
   );
+}
+
+function cleanupExpiredStartedAttempts(): void {
+  if (startedAttempts.size <= 50) return;
+  const entries = [...startedAttempts.entries()];
+  const removeCount = Math.floor(entries.length / 2);
+  for (let i = 0; i < removeCount; i += 1) {
+    const [key] = entries[i] ?? [];
+    if (key) startedAttempts.delete(key);
+  }
+}
+
+async function prunePiGoalLedgerIfNeeded(runtime: GoalRuntime, goalId: string): Promise<void> {
+  try {
+    await runtime.pruneLedgerEvents(goalId, { maxEvents: LEDGER_MAX_EVENTS_PER_GOAL });
+  } catch {
+    // Best-effort; must not disrupt controller polling.
+  }
 }
 
 async function resumePiGoalControllerPollingLoops(runtime: GoalRuntime, ctx: ExtensionContext | ExtensionCommandContext): Promise<void> {

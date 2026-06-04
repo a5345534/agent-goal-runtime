@@ -47,6 +47,16 @@ export class PiHarnessSubagentAdapter {
         handle.stop();
         this.handles.delete(key);
     }
+    /** Stop all tracked subagent background sessions and clear the handle map. */
+    abortAll() {
+        for (const [key, handle] of this.handles) {
+            try {
+                handle.stop();
+            }
+            catch { /* best-effort */ }
+            this.handles.delete(key);
+        }
+    }
     async launchForExistingSubagent(subagent) {
         if (!subagent.sessionFile)
             throw new Error(`Pi subagent ${subagent.subagentId} has no sessionFile to resume`);

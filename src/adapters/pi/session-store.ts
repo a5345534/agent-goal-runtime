@@ -177,6 +177,10 @@ export class PiSessionGoalMirrorStore implements GoalStore {
     return deleted;
   }
 
+  async pruneLedgerEvents(goalId: string, options: { maxEvents: number }): Promise<number> {
+    return this.primary.pruneLedgerEvents?.(goalId, options) ?? 0;
+  }
+
   close(): Promise<void> | void {
     return this.primary.close?.();
   }

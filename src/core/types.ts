@@ -350,6 +350,7 @@ export interface GoalStore {
   getWorkspaceProfile(name: string): Promise<WorkspaceProfile | undefined>;
   listWorkspaceProfiles(): Promise<WorkspaceProfile[]>;
   deleteWorkspaceProfile(name: string): Promise<boolean>;
+  pruneLedgerEvents?(goalId: string, options: { maxEvents: number }): Promise<number>;
   close?(): Promise<void> | void;
 }
 

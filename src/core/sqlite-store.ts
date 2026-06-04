@@ -489,6 +489,19 @@ export class SQLiteGoalStore implements GoalStore {
     return Number(result.changes ?? 0) > 0;
   }
 
+  async pruneLedgerEvents(goalId: string, options: { maxEvents: number }): Promise<number> {
+    const countRow = this.db.prepare("SELECT COUNT(*) AS cnt FROM goal_ledger WHERE goal_id = ?").get(goalId) as { cnt?: number } | undefined;
+    const total = countRow?.cnt ?? 0;
+    if (total <= options.maxEvents) return 0;
+    const excess = total - options.maxEvents;
+    const result = this.db.prepare(
+      `DELETE FROM goal_ledger WHERE id IN (
+        SELECT id FROM goal_ledger WHERE goal_id = ? ORDER BY id ASC LIMIT ?
+      )`,
+    ).run(goalId, excess);
+    return Number(result.changes ?? 0);
+  }
+
   close(): void {
     this.db.close();
   }
