@@ -8,6 +8,7 @@ interface RunnerConfig {
   sessionFile?: string;
   sessionName: string;
   modelArg?: string;
+  thinkingLevel?: string;
   cliPath: string;
   readyPath: string;
   commandPath: string;
@@ -177,6 +178,7 @@ async function main(): Promise<void> {
   else throw new Error("Background runner config requires sessionId or sessionFile");
   args.push("--name", config.sessionName);
   if (config.modelArg) args.push("--model", config.modelArg);
+  if (config.thinkingLevel) args.push("--thinking", config.thinkingLevel);
   const child = spawn(process.execPath, args, {
     cwd: config.cwd,
     env: process.env,

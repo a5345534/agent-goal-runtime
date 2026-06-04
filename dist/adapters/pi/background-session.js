@@ -22,6 +22,7 @@ export async function launchPiRpcBackgroundGoalSession(request) {
         sessionFile: request.sessionFile,
         sessionName: request.sessionName,
         modelArg: request.modelArg,
+        thinkingLevel: request.thinkingLevel,
         cliPath: process.argv[1] ?? "pi",
         readyPath,
         commandPath,

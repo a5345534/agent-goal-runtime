@@ -134,7 +134,8 @@
         "workspaceStrategy": { "type": "string", "minLength": 1 },
         "completionGates": { "$ref": "#/$defs/stringList" },
         "conflicts": { "$ref": "#/$defs/conflicts" },
-        "modelScenario": { "$ref": "#/$defs/scenarioId" }
+        "modelScenario": { "$ref": "#/$defs/scenarioId" },
+        "thinkingLevel": { "type": "string", "minLength": 1 }
       }
     },
     "node": {
@@ -157,7 +158,8 @@
         "workspaceStrategy": { "type": "string", "minLength": 1 },
         "risk": { "enum": ["low", "medium", "high"] },
         "completionGates": { "$ref": "#/$defs/stringList" },
-        "modelScenario": { "$ref": "#/$defs/scenarioId" }
+        "modelScenario": { "$ref": "#/$defs/scenarioId" },
+        "thinkingLevel": { "type": "string", "minLength": 1 }
       }
     }
   }

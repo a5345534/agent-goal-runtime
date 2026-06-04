@@ -31,6 +31,7 @@ export interface GoalDagFileNode {
     risk?: GoalDagNode["risk"];
     completionGates?: string[];
     modelScenario?: string;
+    thinkingLevel?: string;
 }
 export interface GoalDagFilePlanOptions extends GoalDagPlanOptions {
     maxNodes?: number;

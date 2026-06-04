@@ -326,6 +326,7 @@ async function startReadyNodes(
       initialPrompt: allocation?.initialPrompt ?? options.renderInitialPrompt?.({ goalId, node, state }) ?? renderDefaultInitialPrompt(node),
       metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
       now: tickStartedAt,
+      thinkingLevel: node.thinkingLevel,
     };
     const subagent = await runtime.startGoalSubagent(options.adapter, node, startOptions);
     result.started.push(subagent);

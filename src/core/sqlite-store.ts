@@ -111,6 +111,7 @@ interface SqliteDagNodeRow {
   risk: GoalDagNode["risk"] | null;
   model_scenario: string | null;
   model_arg: string | null;
+  thinking_level: string | null;
   conflict_hints_json: string | null;
   completion_gates_json: string;
   status: GoalDagNode["status"];
@@ -356,9 +357,9 @@ export class SQLiteGoalStore implements GoalStore {
         `INSERT INTO goal_dag_nodes (
           goal_id, node_id, slug, objective, scope, kind, validation_json, dependency_node_ids_json,
           expected_outputs_json, validators_json, workspace_strategy, risk,
-          model_scenario, model_arg, conflict_hints_json, completion_gates_json, status, last_validation_summary,
+          model_scenario, model_arg, thinking_level, conflict_hints_json, completion_gates_json, status, last_validation_summary,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, node_id) DO UPDATE SET
           slug = excluded.slug,
           objective = excluded.objective,
@@ -372,6 +373,7 @@ export class SQLiteGoalStore implements GoalStore {
           risk = excluded.risk,
           model_scenario = excluded.model_scenario,
           model_arg = excluded.model_arg,
+          thinking_level = excluded.thinking_level,
           conflict_hints_json = excluded.conflict_hints_json,
           completion_gates_json = excluded.completion_gates_json,
           status = excluded.status,
@@ -393,6 +395,7 @@ export class SQLiteGoalStore implements GoalStore {
         node.risk ?? null,
         node.modelScenario ?? null,
         node.modelArg ?? null,
+        node.thinkingLevel ?? null,
         node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints),
         JSON.stringify(node.completionGates),
         node.status,
@@ -608,6 +611,7 @@ export class SQLiteGoalStore implements GoalStore {
         risk TEXT,
         model_scenario TEXT,
         model_arg TEXT,
+        thinking_level TEXT,
         conflict_hints_json TEXT,
         completion_gates_json TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -643,6 +647,7 @@ export class SQLiteGoalStore implements GoalStore {
     `);
     addColumnIfMissing(this.db, "goal_dag_nodes", "model_scenario", "TEXT");
     addColumnIfMissing(this.db, "goal_dag_nodes", "model_arg", "TEXT");
+    addColumnIfMissing(this.db, "goal_dag_nodes", "thinking_level", "TEXT");
     addColumnIfMissing(this.db, "goal_dag_nodes", "kind", "TEXT");
     addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
     addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_scenario", "TEXT");
@@ -774,6 +779,7 @@ function rowToDagNode(row: SqliteDagNodeRow): GoalDagNode {
     risk: row.risk ?? undefined,
     modelScenario: row.model_scenario ?? undefined,
     modelArg: row.model_arg ?? undefined,
+    thinkingLevel: row.thinking_level ?? undefined,
     conflictHints: parseConflictHints(row.conflict_hints_json),
     completionGates: parseStringArray(row.completion_gates_json),
     status: row.status,

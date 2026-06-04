@@ -77,6 +77,7 @@ export function planGoalDagFromFileDocument(goalId, document, options = {}) {
                 risk: node.risk,
                 modelScenario,
                 modelArg: selection.model,
+                thinkingLevel: node.thinkingLevel,
                 conflictHints,
                 completionGates: [...(node.completionGates ?? defaultCompletionGates ?? ["controller-validation"])],
             };
@@ -141,6 +142,8 @@ function parseNode(input, path) {
         node.completionGates = parseStringArray(input.completionGates, `${path}.completionGates`);
     if (input.modelScenario !== undefined)
         node.modelScenario = requireNonEmptyString(input.modelScenario, `${path}.modelScenario`);
+    if (input.thinkingLevel !== undefined)
+        node.thinkingLevel = requireNonEmptyString(input.thinkingLevel, `${path}.thinkingLevel`);
     return node;
 }
 function parseValidationContract(input, path) {

@@ -304,6 +304,8 @@ export interface GoalDagNode {
   modelScenario?: string;
   /** Harness-native model argument selected for this node, persisted for restart-safe scheduling. */
   modelArg?: string;
+  /** Pi thinking level (off|minimal|low|medium|high|xhigh) selected for this node. */
+  thinkingLevel?: string;
   conflictHints?: GoalDagConflictHints;
   completionGates: string[];
   status: GoalDagNodeStatus;

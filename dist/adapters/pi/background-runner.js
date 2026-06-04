@@ -158,6 +158,8 @@ async function main() {
     args.push("--name", config.sessionName);
     if (config.modelArg)
         args.push("--model", config.modelArg);
+    if (config.thinkingLevel)
+        args.push("--thinking", config.thinkingLevel);
     const child = spawn(process.execPath, args, {
         cwd: config.cwd,
         env: process.env,

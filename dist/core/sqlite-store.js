@@ -147,9 +147,9 @@ export class SQLiteGoalStore {
             .prepare(`INSERT INTO goal_dag_nodes (
           goal_id, node_id, slug, objective, scope, kind, validation_json, dependency_node_ids_json,
           expected_outputs_json, validators_json, workspace_strategy, risk,
-          model_scenario, model_arg, conflict_hints_json, completion_gates_json, status, last_validation_summary,
+          model_scenario, model_arg, thinking_level, conflict_hints_json, completion_gates_json, status, last_validation_summary,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, node_id) DO UPDATE SET
           slug = excluded.slug,
           objective = excluded.objective,
@@ -163,12 +163,13 @@ export class SQLiteGoalStore {
           risk = excluded.risk,
           model_scenario = excluded.model_scenario,
           model_arg = excluded.model_arg,
+          thinking_level = excluded.thinking_level,
           conflict_hints_json = excluded.conflict_hints_json,
           completion_gates_json = excluded.completion_gates_json,
           status = excluded.status,
           last_validation_summary = excluded.last_validation_summary,
           updated_at = excluded.updated_at`)
-            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, node.kind ?? null, node.validation === undefined ? null : JSON.stringify(node.validation), JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
+            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, node.kind ?? null, node.validation === undefined ? null : JSON.stringify(node.validation), JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.thinkingLevel ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
     }
     async getGoalDagNode(goalId, nodeId) {
         const row = this.db
@@ -341,6 +342,7 @@ export class SQLiteGoalStore {
         risk TEXT,
         model_scenario TEXT,
         model_arg TEXT,
+        thinking_level TEXT,
         conflict_hints_json TEXT,
         completion_gates_json TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -376,6 +378,7 @@ export class SQLiteGoalStore {
     `);
         addColumnIfMissing(this.db, "goal_dag_nodes", "model_scenario", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "model_arg", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "thinking_level", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "kind", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_scenario", "TEXT");
@@ -500,6 +503,7 @@ function rowToDagNode(row) {
         risk: row.risk ?? undefined,
         modelScenario: row.model_scenario ?? undefined,
         modelArg: row.model_arg ?? undefined,
+        thinkingLevel: row.thinking_level ?? undefined,
         conflictHints: parseConflictHints(row.conflict_hints_json),
         completionGates: parseStringArray(row.completion_gates_json),
         status: row.status,

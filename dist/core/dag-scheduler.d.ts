@@ -13,6 +13,7 @@ export interface GoalDagPlanNodeInput {
     risk?: GoalDagNode["risk"];
     modelScenario?: string;
     modelArg?: string;
+    thinkingLevel?: string;
     conflictHints?: GoalDagConflictHints;
     completionGates?: string[];
     status?: GoalDagNodeStatus;

@@ -14,6 +14,7 @@ export interface GoalDagPlanNodeInput {
   risk?: GoalDagNode["risk"];
   modelScenario?: string;
   modelArg?: string;
+  thinkingLevel?: string;
   conflictHints?: GoalDagConflictHints;
   completionGates?: string[];
   status?: GoalDagNodeStatus;
@@ -73,6 +74,7 @@ export function createGoalDagNodes(goalId: string, inputs: GoalDagPlanNodeInput[
       risk: input.risk,
       modelScenario: input.modelScenario,
       modelArg: input.modelArg,
+      thinkingLevel: input.thinkingLevel,
       conflictHints: cloneConflictHints(input.conflictHints),
       completionGates: [...(input.completionGates ?? options.defaultCompletionGates ?? ["controller-validation"])],
       status: input.status ?? "planned",

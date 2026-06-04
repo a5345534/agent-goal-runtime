@@ -4,6 +4,7 @@ export interface BackgroundGoalSessionLaunchRequest {
     sessionFile?: string;
     sessionName: string;
     modelArg?: string;
+    thinkingLevel?: string;
 }
 export interface BackgroundGoalSessionHandle {
     sessionFile: string;

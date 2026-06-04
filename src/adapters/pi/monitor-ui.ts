@@ -218,7 +218,7 @@ function renderDagLines(snapshot: GoalMonitorDagSnapshot, now: Date): string[] {
     const nodeRuntime = formatRuntime(node.createdAt, now);
     const nodeActivity = formatAgo(node.updatedAt, now);
     lines.push(`${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 72)} runtime=${nodeRuntime} updated=${nodeActivity}`);
-    if (node.modelScenario || node.modelArg) lines.push(`   model: ${formatMonitorModel(node.modelScenario, node.modelArg)}`);
+    if (node.modelScenario || node.modelArg) lines.push(`   model: ${formatMonitorModel(node.modelScenario, node.modelArg, node.thinkingLevel)}`);
     if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
       lines.push(`   validation contract: ${formatMonitorValidationContract(node)}`);
     }
@@ -260,9 +260,9 @@ function formatMonitorTokens(goal: GoalSummary): string {
   return goal.tokenBudget === undefined ? formatCompactNumber(goal.tokensUsed) : `${formatCompactNumber(goal.tokensUsed)}/${formatCompactNumber(goal.tokenBudget)}`;
 }
 
-function formatMonitorModel(scenario: string | undefined, model: string | undefined): string {
-  if (scenario && model) return `${scenario} -> ${model}`;
-  return model ?? scenario ?? "-";
+function formatMonitorModel(scenario: string | undefined, model: string | undefined, thinkingLevel?: string): string {
+  const parts = [scenario, model, thinkingLevel ? `[${thinkingLevel}]` : undefined].filter((p): p is string => Boolean(p));
+  return parts.join(" -> ") || "-";
 }
 
 function formatMonitorValidationContract(node: GoalDagNode): string {

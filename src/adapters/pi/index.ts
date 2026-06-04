@@ -1172,7 +1172,7 @@ async function formatGoalOrchestrationDetails(runtime: GoalRuntime, goalId: stri
     const title = shortenMiddle(node.slug || node.nodeId, 78);
     lines.push(`  ${index + 1}. [${node.status}] ${title}`);
     lines.push(`     id: ${shortenMiddle(node.nodeId, 86)}`);
-    if (node.modelScenario || node.modelArg) lines.push(`     model: ${formatGoalModel(node.modelScenario, node.modelArg)}`);
+    if (node.modelScenario || node.modelArg) lines.push(`     model: ${formatGoalModel(node.modelScenario, node.modelArg, node.thinkingLevel)}`);
     if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
       lines.push(`     validation contract: ${formatGoalValidationContract(node)}`);
     }
@@ -1858,9 +1858,9 @@ function formatTokenCount(value: number): string {
   return `${Number.isInteger(value / 1_000_000) ? value / 1_000_000 : (value / 1_000_000).toFixed(1)}m`;
 }
 
-function formatGoalModel(scenario: string | undefined, model: string | undefined): string {
-  if (scenario && model) return `${scenario} -> ${model}`;
-  return model ?? scenario ?? "not recorded";
+function formatGoalModel(scenario: string | undefined, model: string | undefined, thinkingLevel?: string): string {
+  const parts = [scenario, model ? `-> ${model}` : undefined, thinkingLevel ? `[${thinkingLevel}]` : undefined].filter((p): p is string => Boolean(p));
+  return parts.join(" ") || "not recorded";
 }
 
 function formatGoalValidationContract(node: GoalDagNode): string {

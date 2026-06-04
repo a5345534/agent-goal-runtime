@@ -11,6 +11,7 @@ export interface BackgroundGoalSessionLaunchRequest {
   sessionFile?: string;
   sessionName: string;
   modelArg?: string;
+  thinkingLevel?: string;
 }
 
 export interface BackgroundGoalSessionHandle {
@@ -41,6 +42,7 @@ export async function launchPiRpcBackgroundGoalSession(request: BackgroundGoalSe
     sessionFile: request.sessionFile,
     sessionName: request.sessionName,
     modelArg: request.modelArg,
+    thinkingLevel: request.thinkingLevel,
     cliPath: process.argv[1] ?? "pi",
     readyPath,
     commandPath,

@@ -174,6 +174,7 @@ function launchRequestForStart(request, modelArg) {
         sessionId: piSessionId(request.subagentId),
         sessionName: metadataString(request.metadata, "sessionName") ?? `subagent ${request.subagentId}: ${request.node.slug}`,
         modelArg: metadataString(request.metadata, "modelArg") ?? modelArg,
+        thinkingLevel: metadataString(request.metadata, "thinkingLevel"),
     };
 }
 function piSessionId(subagentId) {

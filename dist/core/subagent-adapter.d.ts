@@ -74,6 +74,8 @@ export interface StartGoalSubagentOptions {
     initialPrompt: string;
     metadata?: Record<string, unknown>;
     now?: Date | string;
+    /** Pi thinking level for the subagent session (off|minimal|low|medium|high|xhigh). */
+    thinkingLevel?: string;
 }
 export interface StartedGoalSubagent {
     record: GoalSubagentRecord;

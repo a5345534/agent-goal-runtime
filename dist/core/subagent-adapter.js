@@ -10,7 +10,7 @@ export async function startGoalSubagent(adapter, node, options) {
         ref: options.ref,
         systemPrompt: options.systemPrompt,
         initialPrompt: options.initialPrompt,
-        metadata: options.metadata,
+        metadata: { ...(options.metadata ?? {}), ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}) },
     });
     const record = {
         goalId: node.goalId,

@@ -100,6 +100,8 @@ export interface StartGoalSubagentOptions {
   initialPrompt: string;
   metadata?: Record<string, unknown>;
   now?: Date | string;
+  /** Pi thinking level for the subagent session (off|minimal|low|medium|high|xhigh). */
+  thinkingLevel?: string;
 }
 
 export interface StartedGoalSubagent {
@@ -123,7 +125,7 @@ export async function startGoalSubagent(
     ref: options.ref,
     systemPrompt: options.systemPrompt,
     initialPrompt: options.initialPrompt,
-    metadata: options.metadata,
+    metadata: { ...(options.metadata ?? {}), ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}) },
   });
 
   const record: GoalSubagentRecord = {

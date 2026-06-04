@@ -1025,7 +1025,7 @@ async function formatGoalOrchestrationDetails(runtime, goalId) {
         lines.push(`  ${index + 1}. [${node.status}] ${title}`);
         lines.push(`     id: ${shortenMiddle(node.nodeId, 86)}`);
         if (node.modelScenario || node.modelArg)
-            lines.push(`     model: ${formatGoalModel(node.modelScenario, node.modelArg)}`);
+            lines.push(`     model: ${formatGoalModel(node.modelScenario, node.modelArg, node.thinkingLevel)}`);
         if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
             lines.push(`     validation contract: ${formatGoalValidationContract(node)}`);
         }
@@ -1668,10 +1668,9 @@ function formatTokenCount(value) {
         return `${Number.isInteger(value / 1_000) ? value / 1_000 : (value / 1_000).toFixed(1)}k`;
     return `${Number.isInteger(value / 1_000_000) ? value / 1_000_000 : (value / 1_000_000).toFixed(1)}m`;
 }
-function formatGoalModel(scenario, model) {
-    if (scenario && model)
-        return `${scenario} -> ${model}`;
-    return model ?? scenario ?? "not recorded";
+function formatGoalModel(scenario, model, thinkingLevel) {
+    const parts = [scenario, model ? `-> ${model}` : undefined, thinkingLevel ? `[${thinkingLevel}]` : undefined].filter((p) => Boolean(p));
+    return parts.join(" ") || "not recorded";
 }
 function formatGoalValidationContract(node) {
     const parts = [

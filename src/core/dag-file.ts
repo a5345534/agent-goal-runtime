@@ -34,6 +34,7 @@ export interface GoalDagFileNode {
   risk?: GoalDagNode["risk"];
   completionGates?: string[];
   modelScenario?: string;
+  thinkingLevel?: string;
 }
 
 export interface GoalDagFilePlanOptions extends GoalDagPlanOptions {
@@ -119,6 +120,7 @@ export function planGoalDagFromFileDocument(
         risk: node.risk,
         modelScenario,
         modelArg: selection.model,
+        thinkingLevel: node.thinkingLevel,
         conflictHints,
         completionGates: [...(node.completionGates ?? defaultCompletionGates ?? ["controller-validation"])],
       };
@@ -176,6 +178,7 @@ function parseNode(input: unknown, path: string): GoalDagFileNode {
   if (input.risk !== undefined) node.risk = parseRisk(input.risk, `${path}.risk`);
   if (input.completionGates !== undefined) node.completionGates = parseStringArray(input.completionGates, `${path}.completionGates`);
   if (input.modelScenario !== undefined) node.modelScenario = requireNonEmptyString(input.modelScenario, `${path}.modelScenario`);
+  if (input.thinkingLevel !== undefined) node.thinkingLevel = requireNonEmptyString(input.thinkingLevel, `${path}.thinkingLevel`);
   return node;
 }
 
