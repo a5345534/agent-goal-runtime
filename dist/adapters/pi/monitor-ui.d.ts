@@ -22,11 +22,19 @@ export declare class GoalMonitorController {
     private readonly readDagSnapshot;
     private readonly now;
     private buttonIndex;
-    private scroll;
+    private activePane;
+    private dagScroll;
+    private transcriptScroll;
     private followTail;
+    private lastDagLineCount;
+    private lastTranscriptLineCount;
     constructor(goal: GoalSummary, readTranscript?: () => GoalTranscriptSnapshot, readDagSnapshot?: () => GoalMonitorDagSnapshot, now?: () => Date);
     get actions(): GoalMonitorAction[];
     handleInput(data: string): GoalMonitorSelection | undefined;
+    private activePageSize;
+    private scrollActivePane;
+    private scrollActivePaneToTop;
+    private scrollActivePaneToEnd;
     render(width: number, theme: GoalListThemeLike): string[];
 }
 export declare function readGoalTranscriptLines(sessionFile: string | undefined): string[];

@@ -26,10 +26,16 @@ export interface GoalMonitorDagSnapshot {
 const DEFAULT_VISIBLE_TRANSCRIPT_LINES = 18;
 const DEFAULT_VISIBLE_DAG_LINES = 18;
 
+type GoalMonitorPane = "dag" | "transcript";
+
 export class GoalMonitorController {
   private buttonIndex = 0;
-  private scroll = 0;
+  private activePane: GoalMonitorPane = "dag";
+  private dagScroll = 0;
+  private transcriptScroll = 0;
   private followTail = true;
+  private lastDagLineCount = 0;
+  private lastTranscriptLineCount = 0;
 
   constructor(
     private readonly goal: GoalSummary,
@@ -58,23 +64,36 @@ export class GoalMonitorController {
       this.buttonIndex = (this.buttonIndex + 1) % this.actions.length;
       return undefined;
     }
+    if (data === "d" || data === "D") {
+      this.activePane = "dag";
+      return undefined;
+    }
+    if (data === "t" || data === "T") {
+      this.activePane = "transcript";
+      return undefined;
+    }
     if (matchesKey(data, Key.up)) {
-      this.followTail = false;
-      this.scroll = Math.max(0, this.scroll - 1);
+      this.scrollActivePane(-1);
       return undefined;
     }
     if (matchesKey(data, Key.down)) {
-      this.followTail = false;
-      this.scroll += 1;
+      this.scrollActivePane(1);
+      return undefined;
+    }
+    if (matchesKey(data, Key.pageUp)) {
+      this.scrollActivePane(-this.activePageSize());
+      return undefined;
+    }
+    if (matchesKey(data, Key.pageDown)) {
+      this.scrollActivePane(this.activePageSize());
       return undefined;
     }
     if (matchesKey(data, Key.home)) {
-      this.followTail = false;
-      this.scroll = 0;
+      this.scrollActivePaneToTop();
       return undefined;
     }
     if (matchesKey(data, Key.end)) {
-      this.followTail = true;
+      this.scrollActivePaneToEnd();
       return undefined;
     }
     if (matchesKey(data, Key.enter)) {
@@ -82,6 +101,38 @@ export class GoalMonitorController {
       return action === "close" ? { kind: "close" } : { kind: "action", action };
     }
     return undefined;
+  }
+
+  private activePageSize(): number {
+    const visibleCount = this.activePane === "dag" ? DEFAULT_VISIBLE_DAG_LINES : DEFAULT_VISIBLE_TRANSCRIPT_LINES;
+    return Math.max(1, visibleCount - 1);
+  }
+
+  private scrollActivePane(delta: number): void {
+    if (this.activePane === "dag") {
+      this.dagScroll = Math.max(0, this.dagScroll + delta);
+      return;
+    }
+    this.followTail = false;
+    this.transcriptScroll = Math.max(0, this.transcriptScroll + delta);
+  }
+
+  private scrollActivePaneToTop(): void {
+    if (this.activePane === "dag") {
+      this.dagScroll = 0;
+      return;
+    }
+    this.followTail = false;
+    this.transcriptScroll = 0;
+  }
+
+  private scrollActivePaneToEnd(): void {
+    if (this.activePane === "dag") {
+      this.dagScroll = Math.max(0, this.lastDagLineCount - DEFAULT_VISIBLE_DAG_LINES);
+      return;
+    }
+    this.followTail = true;
+    this.transcriptScroll = Math.max(0, this.lastTranscriptLineCount - DEFAULT_VISIBLE_TRANSCRIPT_LINES);
   }
 
   render(width: number, theme: GoalListThemeLike): string[] {
@@ -94,38 +145,63 @@ export class GoalMonitorController {
     const transcriptLines = snapshot.lines;
     const dagLines = renderDagLines(dag, this.now());
     const visibleTranscriptCount = DEFAULT_VISIBLE_TRANSCRIPT_LINES;
-    if (this.followTail) this.scroll = Math.max(0, transcriptLines.length - visibleTranscriptCount);
-    else this.scroll = Math.min(this.scroll, Math.max(0, transcriptLines.length - 1));
+    const visibleDagCount = DEFAULT_VISIBLE_DAG_LINES;
+    this.lastDagLineCount = dagLines.length;
+    this.lastTranscriptLineCount = transcriptLines.length;
+    this.dagScroll = clampScroll(this.dagScroll, dagLines.length, visibleDagCount);
+    if (this.followTail) this.transcriptScroll = Math.max(0, transcriptLines.length - visibleTranscriptCount);
+    else this.transcriptScroll = clampScroll(this.transcriptScroll, transcriptLines.length, visibleTranscriptCount);
 
     const lines = [
       truncateToWidth(`${theme.fg("accent", title)}  ${actions}`, width),
       truncateToWidth(`status=${derivedMonitorStatus(this.goal, dag)} tokens=${formatMonitorTokens(this.goal)} elapsed=${formatElapsedSeconds(this.goal.timeUsedSeconds)}`, width),
       truncateToWidth(`workspace=${shortenPath(this.goal.executionWorkspace ?? "legacy")} branch=${shortenMiddle(this.goal.branch ?? this.goal.ref ?? "-", 72)}`, width),
       truncateToWidth(`DAG nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} subagents=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))} refreshed=${compactTimestamp(dag.refreshedAt ?? new Date(0).toISOString())}`, width),
-      truncateToWidth(theme.fg("dim", "live dashboard • ↑↓ transcript scroll • Home top • End live tail • ←→/Tab action • Enter action • Esc close"), width),
+      truncateToWidth(theme.fg("dim", `live dashboard • pane=${this.activePane} • d/t focus • ↑↓ scroll • PgUp/PgDn page • Home top • End bottom/live • ←→/Tab action • Enter action • Esc close`), width),
       truncateToWidth(theme.fg("borderMuted", "─".repeat(Math.max(0, width))), width),
-      truncateToWidth(theme.fg("accent", "DAG / Subagents"), width),
+      truncateToWidth(theme.fg(this.activePane === "dag" ? "accent" : "muted", `${this.activePane === "dag" ? "▶ " : "  "}DAG / Subagents`), width),
     ];
 
     if (dagLines.length === 0) lines.push(truncateToWidth(theme.fg("muted", "No DAG nodes recorded yet"), width));
-    for (const line of dagLines.slice(0, DEFAULT_VISIBLE_DAG_LINES)) lines.push(truncateToWidth(line, width));
-    if (dagLines.length > DEFAULT_VISIBLE_DAG_LINES) lines.push(truncateToWidth(theme.fg("dim", `… ${dagLines.length - DEFAULT_VISIBLE_DAG_LINES} more DAG lines`), width));
+    const dagStart = this.dagScroll;
+    const dagEnd = Math.min(dagLines.length, dagStart + visibleDagCount);
+    for (const line of dagLines.slice(dagStart, dagEnd)) lines.push(truncateToWidth(line, width));
+    if (dagLines.length > 0) lines.push(truncateToWidth(theme.fg("dim", formatDagRange(dagStart, dagEnd, dagLines.length, this.activePane === "dag")), width));
 
     lines.push(truncateToWidth(theme.fg("borderMuted", "─".repeat(Math.max(0, width))), width));
-    lines.push(truncateToWidth(theme.fg("accent", `Transcript tail (${snapshot.entryCount} entries / ${snapshot.messageCount} messages)`), width));
+    lines.push(truncateToWidth(theme.fg(this.activePane === "transcript" ? "accent" : "muted", `${this.activePane === "transcript" ? "▶ " : "  "}Transcript tail (${snapshot.entryCount} entries / ${snapshot.messageCount} messages)`), width));
     if (snapshot.diagnostic) lines.push(truncateToWidth(theme.fg("warning", snapshot.diagnostic), width));
     if (transcriptLines.length === 0) {
       lines.push(truncateToWidth(theme.fg("muted", "No transcript entries available"), width));
       return lines;
     }
 
-    const end = Math.min(transcriptLines.length, this.scroll + visibleTranscriptCount);
-    for (const line of transcriptLines.slice(this.scroll, end)) {
+    const transcriptStart = this.transcriptScroll;
+    const transcriptEnd = Math.min(transcriptLines.length, transcriptStart + visibleTranscriptCount);
+    for (const line of transcriptLines.slice(transcriptStart, transcriptEnd)) {
       lines.push(truncateToWidth(line, width));
     }
-    lines.push(truncateToWidth(theme.fg("dim", `${this.scroll + 1}-${end}/${transcriptLines.length}${this.followTail ? " live" : ""}`), width));
+    lines.push(truncateToWidth(theme.fg("dim", formatTranscriptRange(transcriptStart, transcriptEnd, transcriptLines.length, this.activePane === "transcript", this.followTail)), width));
     return lines;
   }
+}
+
+function clampScroll(scroll: number, totalLines: number, visibleLines: number): number {
+  return Math.min(Math.max(0, scroll), Math.max(0, totalLines - visibleLines));
+}
+
+function formatDagRange(start: number, end: number, total: number, active: boolean): string {
+  const details = [
+    active ? "active" : undefined,
+    start > 0 ? `${start} previous DAG lines` : undefined,
+    total > end ? `${total - end} more DAG lines` : undefined,
+  ].filter(Boolean);
+  return `DAG lines: ${start + 1}-${end}/${total}${details.length ? ` • ${details.join(" • ")}` : ""}`;
+}
+
+function formatTranscriptRange(start: number, end: number, total: number, active: boolean, followTail: boolean): string {
+  const details = [active ? "active" : undefined, followTail ? "live" : undefined].filter(Boolean);
+  return `${start + 1}-${end}/${total}${details.length ? ` ${details.join(" • ")}` : ""}`;
 }
 
 function renderDagLines(snapshot: GoalMonitorDagSnapshot, now: Date): string[] {

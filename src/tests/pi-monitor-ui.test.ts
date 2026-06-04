@@ -148,6 +148,66 @@ test("goal monitor renders live DAG and subagent dashboard", () => {
   assert.match(rendered, /Transcript tail/);
 });
 
+test("goal monitor scrolls overflowing DAG lines", () => {
+  const now = new Date("2026-05-31T00:05:00.000Z");
+  const nodes: GoalDagNode[] = Array.from({ length: 12 }, (_, index) => ({
+    goalId: "abcdef123456",
+    nodeId: `dag-node-${String(index + 1).padStart(2, "0")}`,
+    slug: `dag-node-${String(index + 1).padStart(2, "0")}`,
+    objective: `Do DAG node ${index + 1}`,
+    dependencyNodeIds: [],
+    expectedOutputs: [],
+    validators: [],
+    completionGates: ["controller-validation"],
+    status: "planned",
+    createdAt: "2026-05-31T00:00:00.000Z",
+    updatedAt: "2026-05-31T00:00:00.000Z",
+  }));
+  const controller = new GoalMonitorController(
+    summary("active"),
+    () => ({ lines: ["tail"], entryCount: 1, messageCount: 1 }),
+    () => ({ nodes, subagents: [], refreshedAt: now.toISOString() }),
+    () => now,
+  );
+  const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+
+  const firstPage = controller.render(140, theme).join("\n");
+  assert.match(firstPage, /pane=dag/);
+  assert.match(firstPage, /DAG lines: 1-18\/24 • active • 6 more DAG lines/);
+  assert.doesNotMatch(firstPage, /dag-node-12/);
+
+  controller.handleInput("\x1b[6~"); // PageDown scrolls the active DAG pane.
+  const secondPage = controller.render(140, theme).join("\n");
+
+  assert.match(secondPage, /dag-node-12/);
+  assert.match(secondPage, /DAG lines: 7-24\/24 • active • 6 previous DAG lines/);
+});
+
+test("goal monitor transcript scroll remains available after switching panes", () => {
+  const lines = Array.from({ length: 25 }, (_, index) => `transcript-${String(index + 1).padStart(2, "0")}`);
+  const controller = new GoalMonitorController(summary("active"), () => ({ lines, entryCount: lines.length, messageCount: lines.length }));
+  const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+
+  const initial = controller.render(120, theme).join("\n");
+  assert.match(initial, /pane=dag/);
+  assert.match(initial, /transcript-25/);
+
+  controller.handleInput("t");
+  controller.handleInput("\x1b[H"); // Home scrolls the transcript pane after focus switch.
+  const top = controller.render(120, theme).join("\n");
+
+  assert.match(top, /pane=transcript/);
+  assert.match(top, /transcript-01/);
+  assert.doesNotMatch(top, /transcript-25/);
+  assert.match(top, /1-18\/25 active/);
+
+  controller.handleInput("\x1b[F"); // End restores transcript live tail.
+  const tail = controller.render(120, theme).join("\n");
+
+  assert.match(tail, /transcript-25/);
+  assert.match(tail, /8-25\/25 active • live/);
+});
+
 test("goal monitor render auto-follows live transcript tail", () => {
   let lines = ["one"];
   const controller = new GoalMonitorController(summary("active"), () => ({ lines, entryCount: lines.length, messageCount: lines.length }));
