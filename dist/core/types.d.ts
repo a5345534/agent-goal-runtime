@@ -195,12 +195,35 @@ export interface GoalDagConflictHints {
     modules?: string[];
     capabilities?: string[];
 }
+export type GoalDagNodeKind = "test-spec" | "test-review" | "implementation" | "audit" | string;
+export type GoalValidationEvidenceRequirement = "validators-ran" | "locked-artifacts-unchanged" | "implementation-diff-present" | "non-test-diff-present" | "post-merge-validation-ran" | "audit-report-present" | string;
+export interface GoalValidationArtifactLock {
+    path: string;
+    sha256: string;
+    sourceNodeId?: string;
+    approvedByNodeId?: string;
+    approvedAt?: string;
+}
+export interface GoalDagValidationContract {
+    profile?: string;
+    testSpecNodeId?: string;
+    approvedByNodeId?: string;
+    artifactLocks?: GoalValidationArtifactLock[];
+    requiredEvidence?: GoalValidationEvidenceRequirement[];
+    onAuditTestGap?: string;
+    /** Optional Git ref used by generic diff evidence checks. */
+    diffBaseRef?: string;
+    /** Optional report paths used by audit-report-present evidence checks. */
+    auditReportPaths?: string[];
+}
 export interface GoalDagNode {
     goalId: string;
     nodeId: string;
     slug: string;
     objective: string;
     scope?: string;
+    kind?: GoalDagNodeKind;
+    validation?: GoalDagValidationContract;
     dependencyNodeIds: string[];
     expectedOutputs: string[];
     validators: string[];

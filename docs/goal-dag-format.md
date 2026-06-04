@@ -158,10 +158,49 @@ Nodes with no `after` dependencies are immediately schedulable, subject to contr
 | `validators` | no | string array | Shell validators for controller validation. |
 | `conflicts` | no | object | File/module/capability conflict hints for scheduler serialization. |
 | `scope` | no | string | Human-readable scope label. |
+| `kind` | no | string | Optional workflow role such as `test-spec`, `test-review`, `implementation`, or `audit`. Runtime treats unknown values as labels but policy may use them. |
+| `validation` | no | object | Optional validation contract metadata: profile, test-spec provenance, artifact locks, required evidence, audit test-gap policy, and generic diff/report settings. |
 | `workspaceStrategy` | no | string | Workspace allocation strategy. Defaults to native Git worktree in Pi. |
 | `risk` | no | `low` / `medium` / `high` | Risk label for scheduling/model-routing/review policy. |
 | `completionGates` | no | string array | Completion gates. Defaults to `controller-validation`. |
 | `modelScenario` | no | scenario id | Explicit model-routing scenario for this node. Overrides defaults and rules. |
+
+## Validation contract
+
+A node can declare a generic validation contract. Runtime persists this metadata and uses it during controller validation; planners and project rule packs are responsible for generating project-specific validators.
+
+```json
+{
+  "id": "implement-feature",
+  "objective": "Implement the feature after tests are approved",
+  "kind": "implementation",
+  "risk": "high",
+  "validators": ["npm test"],
+  "validation": {
+    "profile": "code-change",
+    "testSpecNodeId": "write-feature-tests",
+    "approvedByNodeId": "review-feature-tests",
+    "artifactLocks": [
+      {
+        "path": "tests/feature.test.ts",
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "sourceNodeId": "write-feature-tests"
+      }
+    ],
+    "requiredEvidence": [
+      "validators-ran",
+      "locked-artifacts-unchanged",
+      "implementation-diff-present"
+    ],
+    "diffBaseRef": "main",
+    "onAuditTestGap": "reopen-test-spec"
+  }
+}
+```
+
+Supported built-in evidence labels include `validators-ran`, `locked-artifacts-unchanged`, `implementation-diff-present`, `non-test-diff-present`, `post-merge-validation-ran`, and `audit-report-present`. Unknown labels fail closed until a planner/runtime adapter teaches the controller how to satisfy them.
+
+For high-risk `kind=implementation` nodes, controller validation fails if the node has no validators, outputs, validation profile, approved test-spec reference, artifact locks, or required evidence. This prevents high-risk work from completing on self-report alone.
 
 ## Defaults
 

@@ -1,6 +1,6 @@
 import { createGoalDagNodes, type GoalDagPlanNodeInput, type GoalDagPlanOptions } from "./dag-scheduler.js";
 import { assertKnownModelScenario, parseGoalModelRoutingConfig, selectModelScenarioForNode, type GoalModelRoutingConfig } from "./model-routing.js";
-import type { GoalDagConflictHints, GoalDagNode } from "./types.js";
+import type { GoalDagConflictHints, GoalDagNode, GoalDagValidationContract, GoalValidationArtifactLock } from "./types.js";
 import type { GoalDagPlannedNodesResult, GoalDagPlannerResult } from "./dag-planner.js";
 
 export interface GoalDagFileDocument {
@@ -28,6 +28,8 @@ export interface GoalDagFileNode {
   validators?: string[];
   conflicts?: GoalDagConflictHints;
   scope?: string;
+  kind?: GoalDagNode["kind"];
+  validation?: GoalDagValidationContract;
   workspaceStrategy?: string;
   risk?: GoalDagNode["risk"];
   completionGates?: string[];
@@ -108,6 +110,8 @@ export function planGoalDagFromFileDocument(
         slug: node.id,
         objective: node.objective,
         scope: node.scope,
+        kind: node.kind,
+        validation: cloneValidationContract(node.validation),
         dependencyNodeIds: [...(node.after ?? [])],
         expectedOutputs,
         validators,
@@ -166,11 +170,44 @@ function parseNode(input: unknown, path: string): GoalDagFileNode {
   if (input.validators !== undefined) node.validators = parseStringArray(input.validators, `${path}.validators`);
   if (input.conflicts !== undefined) node.conflicts = parseConflicts(input.conflicts, `${path}.conflicts`);
   if (input.scope !== undefined) node.scope = requireNonEmptyString(input.scope, `${path}.scope`);
+  if (input.kind !== undefined) node.kind = requireNonEmptyString(input.kind, `${path}.kind`);
+  if (input.validation !== undefined) node.validation = parseValidationContract(input.validation, `${path}.validation`);
   if (input.workspaceStrategy !== undefined) node.workspaceStrategy = requireNonEmptyString(input.workspaceStrategy, `${path}.workspaceStrategy`);
   if (input.risk !== undefined) node.risk = parseRisk(input.risk, `${path}.risk`);
   if (input.completionGates !== undefined) node.completionGates = parseStringArray(input.completionGates, `${path}.completionGates`);
   if (input.modelScenario !== undefined) node.modelScenario = requireNonEmptyString(input.modelScenario, `${path}.modelScenario`);
   return node;
+}
+
+function parseValidationContract(input: unknown, path: string): GoalDagValidationContract {
+  if (!isRecord(input)) throw new Error(`Invalid goal DAG file: ${path} must be an object`);
+  const contract: GoalDagValidationContract = {};
+  if (input.profile !== undefined) contract.profile = requireNonEmptyString(input.profile, `${path}.profile`);
+  if (input.testSpecNodeId !== undefined) contract.testSpecNodeId = requireKebabId(input.testSpecNodeId, `${path}.testSpecNodeId`);
+  if (input.approvedByNodeId !== undefined) contract.approvedByNodeId = requireKebabId(input.approvedByNodeId, `${path}.approvedByNodeId`);
+  if (input.artifactLocks !== undefined) contract.artifactLocks = parseArtifactLocks(input.artifactLocks, `${path}.artifactLocks`);
+  if (input.requiredEvidence !== undefined) contract.requiredEvidence = parseStringArray(input.requiredEvidence, `${path}.requiredEvidence`);
+  if (input.onAuditTestGap !== undefined) contract.onAuditTestGap = requireNonEmptyString(input.onAuditTestGap, `${path}.onAuditTestGap`);
+  if (input.diffBaseRef !== undefined) contract.diffBaseRef = requireNonEmptyString(input.diffBaseRef, `${path}.diffBaseRef`);
+  if (input.auditReportPaths !== undefined) contract.auditReportPaths = parseStringArray(input.auditReportPaths, `${path}.auditReportPaths`);
+  return contract;
+}
+
+function parseArtifactLocks(input: unknown, path: string): GoalValidationArtifactLock[] {
+  if (!Array.isArray(input)) throw new Error(`Invalid goal DAG file: ${path} must be an array`);
+  return input.map((item, index) => parseArtifactLock(item, `${path}[${index}]`));
+}
+
+function parseArtifactLock(input: unknown, path: string): GoalValidationArtifactLock {
+  if (!isRecord(input)) throw new Error(`Invalid goal DAG file: ${path} must be an object`);
+  const lock: GoalValidationArtifactLock = {
+    path: requireNonEmptyString(input.path, `${path}.path`),
+    sha256: requireSha256(input.sha256, `${path}.sha256`),
+  };
+  if (input.sourceNodeId !== undefined) lock.sourceNodeId = requireKebabId(input.sourceNodeId, `${path}.sourceNodeId`);
+  if (input.approvedByNodeId !== undefined) lock.approvedByNodeId = requireKebabId(input.approvedByNodeId, `${path}.approvedByNodeId`);
+  if (input.approvedAt !== undefined) lock.approvedAt = requireNonEmptyString(input.approvedAt, `${path}.approvedAt`);
+  return lock;
 }
 
 function validateFileNodeGraph(nodes: GoalDagFileNode[]): void {
@@ -268,6 +305,12 @@ function requireNonEmptyString(input: unknown, path: string): string {
   return input.trim();
 }
 
+function requireSha256(input: unknown, path: string): string {
+  const value = requireNonEmptyString(input, path);
+  if (!/^[a-fA-F0-9]{64}$/.test(value)) throw new Error(`Invalid goal DAG file: ${path} must be a sha256 hex digest`);
+  return value.toLowerCase();
+}
+
 function isRecord(input: unknown): input is Record<string, unknown> {
   return Boolean(input) && typeof input === "object" && !Array.isArray(input);
 }
@@ -278,5 +321,15 @@ function cloneConflictHints(hints: GoalDagConflictHints | undefined): GoalDagCon
     files: hints.files ? [...hints.files] : undefined,
     modules: hints.modules ? [...hints.modules] : undefined,
     capabilities: hints.capabilities ? [...hints.capabilities] : undefined,
+  };
+}
+
+function cloneValidationContract(contract: GoalDagValidationContract | undefined): GoalDagValidationContract | undefined {
+  if (!contract) return undefined;
+  return {
+    ...contract,
+    artifactLocks: contract.artifactLocks?.map((lock) => ({ ...lock })),
+    requiredEvidence: contract.requiredEvidence ? [...contract.requiredEvidence] : undefined,
+    auditReportPaths: contract.auditReportPaths ? [...contract.auditReportPaths] : undefined,
   };
 }

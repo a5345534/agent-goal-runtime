@@ -13,6 +13,8 @@ export function createGoalDagNodes(goalId, inputs, options = {}) {
             slug,
             objective: input.objective,
             scope: input.scope,
+            kind: input.kind,
+            validation: cloneValidationContract(input.validation),
             dependencyNodeIds: [...(input.dependencyNodeIds ?? [])],
             expectedOutputs: [...(input.expectedOutputs ?? [])],
             validators: [...(input.validators ?? [])],
@@ -214,6 +216,16 @@ function cloneConflictHints(hints) {
         files: hints.files ? [...hints.files] : undefined,
         modules: hints.modules ? [...hints.modules] : undefined,
         capabilities: hints.capabilities ? [...hints.capabilities] : undefined,
+    };
+}
+function cloneValidationContract(contract) {
+    if (!contract)
+        return undefined;
+    return {
+        ...contract,
+        artifactLocks: contract.artifactLocks?.map((lock) => ({ ...lock })),
+        requiredEvidence: contract.requiredEvidence ? [...contract.requiredEvidence] : undefined,
+        auditReportPaths: contract.auditReportPaths ? [...contract.auditReportPaths] : undefined,
     };
 }
 function sanitizeSlug(value) {

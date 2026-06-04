@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +100,88 @@ test("controller validation runner can execute shell validators when explicitly 
         }));
         assert.equal(failing.status, "failed");
         assert.match(failing.followupPrompt ?? "", /echo nope/);
+    }
+    finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+test("controller validation runner verifies locked validation artifacts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-validation-lock-"));
+    try {
+        const file = join(dir, "tests", "feature.test.ts");
+        execFileSync("mkdir", ["-p", join(dir, "tests")]);
+        writeFileSync(file, "assert true\n");
+        const sha256 = createHash("sha256").update("assert true\n").digest("hex");
+        const passing = runControllerValidation(request({
+            node: {
+                ...request().node,
+                kind: "implementation",
+                risk: "high",
+                validation: {
+                    profile: "code-change",
+                    artifactLocks: [{ path: "tests/feature.test.ts", sha256 }],
+                    requiredEvidence: ["locked-artifacts-unchanged"],
+                },
+            },
+            subagent: { ...request().subagent, workspacePath: dir },
+        }), { executeValidators: true });
+        assert.equal(passing.status, "passed");
+        assert.match(passing.validationSignals?.join("\n") ?? "", /passed artifact lock/);
+        writeFileSync(file, "assert false\n");
+        const failing = runControllerValidation(request({
+            node: {
+                ...request().node,
+                kind: "implementation",
+                risk: "high",
+                validation: {
+                    profile: "code-change",
+                    artifactLocks: [{ path: "tests/feature.test.ts", sha256 }],
+                    requiredEvidence: ["locked-artifacts-unchanged"],
+                },
+            },
+            subagent: { ...request().subagent, workspacePath: dir },
+        }), { executeValidators: true });
+        assert.equal(failing.status, "failed");
+        assert.match(failing.summary ?? "", /artifact locks changed or missing/);
+    }
+    finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+test("controller validation runner blocks high-risk implementation nodes without validation contract", () => {
+    const result = runControllerValidation(request({
+        node: { ...request().node, kind: "implementation", risk: "high" },
+    }));
+    assert.equal(result.status, "failed");
+    assert.match(result.summary ?? "", /high-risk implementation nodes require/);
+});
+test("controller validation runner checks required implementation diff evidence", () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-validation-diff-"));
+    try {
+        execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+        execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
+        execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+        writeFileSync(join(dir, "README.md"), "base\n");
+        execFileSync("git", ["add", "README.md"], { cwd: dir });
+        execFileSync("git", ["commit", "-m", "base"], { cwd: dir, stdio: "ignore" });
+        execFileSync("git", ["branch", "base"], { cwd: dir });
+        writeFileSync(join(dir, "src.ts"), "implementation\n");
+        const result = runControllerValidation(request({
+            node: {
+                ...request().node,
+                kind: "implementation",
+                risk: "high",
+                validation: {
+                    profile: "code-change",
+                    diffBaseRef: "base",
+                    requiredEvidence: ["implementation-diff-present", "non-test-diff-present"],
+                },
+            },
+            subagent: { ...request().subagent, workspacePath: dir },
+        }));
+        assert.equal(result.status, "passed");
+        assert.match(result.validationSignals?.join("\n") ?? "", /satisfied evidence: implementation-diff-present/);
+        assert.match(result.validationSignals?.join("\n") ?? "", /satisfied evidence: non-test-diff-present/);
     }
     finally {
         rmSync(dir, { recursive: true, force: true });

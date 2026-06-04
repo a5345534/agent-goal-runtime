@@ -1030,6 +1030,9 @@ async function formatGoalOrchestrationDetails(runtime, goalId) {
         lines.push(`     id: ${shortenMiddle(node.nodeId, 86)}`);
         if (node.modelScenario || node.modelArg)
             lines.push(`     model: ${formatGoalModel(node.modelScenario, node.modelArg)}`);
+        if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
+            lines.push(`     validation contract: ${formatGoalValidationContract(node)}`);
+        }
         for (const line of wrapDisplayText(node.objective, 86))
             lines.push(`     objective: ${line}`);
         if (node.dependencyNodeIds.length)
@@ -1673,5 +1676,14 @@ function formatGoalModel(scenario, model) {
     if (scenario && model)
         return `${scenario} -> ${model}`;
     return model ?? scenario ?? "not recorded";
+}
+function formatGoalValidationContract(node) {
+    const parts = [
+        node.kind ? `kind=${node.kind}` : undefined,
+        node.validation?.profile ? `profile=${node.validation.profile}` : undefined,
+        node.validation?.requiredEvidence?.length ? `evidence=${node.validation.requiredEvidence.join(",")}` : undefined,
+        node.validation?.artifactLocks?.length ? `locks=${node.validation.artifactLocks.length}` : undefined,
+    ].filter((part) => Boolean(part));
+    return parts.length ? parts.join(" ") : "not configured";
 }
 //# sourceMappingURL=index.js.map

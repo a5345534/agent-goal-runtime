@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "add-test-spec-validation-workflow",
+  "generatedAt": "2026-06-04T15:34:45.528907+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "cdbeb076797406a93138673f182b96087637456a3a59a455cdc290580b5bb84b"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "1f5655823a9870bdd8470efed37afcf19822aca90672ff3ffc268afa530cd4c7"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "146cc1c70defb256992acae534a1bd949dcb6f007a64e8c00050209845d8c7f8"
+    }
+  ]
+}

@@ -18,10 +18,21 @@ export interface ControllerValidationCommandResult {
     output?: string;
     error?: string;
 }
+export interface ControllerValidationArtifactLockResult {
+    path: string;
+    ok: boolean;
+    expectedSha256: string;
+    actualSha256?: string;
+    error?: string;
+}
 export interface ControllerValidationRunResult {
     missingOutputs: string[];
     skippedValidators: string[];
     commandResults: ControllerValidationCommandResult[];
+    artifactLockResults: ControllerValidationArtifactLockResult[];
+    satisfiedEvidence: string[];
+    missingEvidence: string[];
+    policyFailures: string[];
 }
 export declare function createControllerValidationRunner(options?: ControllerValidationRunnerOptions): GoalControllerValidator;
 export declare function runControllerValidation(request: GoalControllerValidationRequest, options?: ControllerValidationRunnerOptions): GoalControllerValidationResult;

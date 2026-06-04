@@ -4,6 +4,8 @@ export interface GoalDagPlanNodeInput {
     slug?: string;
     objective: string;
     scope?: string;
+    kind?: GoalDagNode["kind"];
+    validation?: GoalDagNode["validation"];
     dependencyNodeIds?: string[];
     expectedOutputs?: string[];
     validators?: string[];

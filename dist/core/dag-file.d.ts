@@ -1,6 +1,6 @@
 import { type GoalDagPlanOptions } from "./dag-scheduler.js";
 import { type GoalModelRoutingConfig } from "./model-routing.js";
-import type { GoalDagConflictHints, GoalDagNode } from "./types.js";
+import type { GoalDagConflictHints, GoalDagNode, GoalDagValidationContract } from "./types.js";
 import type { GoalDagPlannedNodesResult, GoalDagPlannerResult } from "./dag-planner.js";
 export interface GoalDagFileDocument {
     version: 1;
@@ -25,6 +25,8 @@ export interface GoalDagFileNode {
     validators?: string[];
     conflicts?: GoalDagConflictHints;
     scope?: string;
+    kind?: GoalDagNode["kind"];
+    validation?: GoalDagValidationContract;
     workspaceStrategy?: string;
     risk?: GoalDagNode["risk"];
     completionGates?: string[];

@@ -56,11 +56,21 @@ test("memory store persists durable goal DAG nodes and subagent registry records
         createdAt: "2026-06-02T00:00:01.000Z",
         updatedAt: "2026-06-02T00:00:01.000Z",
     });
-    await runtime.saveGoalDagNode(first);
+    await runtime.saveGoalDagNode({
+        ...first,
+        kind: "implementation",
+        validation: {
+            profile: "code-change",
+            artifactLocks: [{ path: "tests/attendance.test.ts", sha256: "b".repeat(64), sourceNodeId: "write-tests" }],
+            requiredEvidence: ["validators-ran", "locked-artifacts-unchanged"],
+        },
+    });
     await runtime.saveGoalDagNode(second);
     await runtime.saveGoalSubagent(subagent());
     const state = await runtime.getGoalOrchestrationState("goal-1");
     assert.deepEqual(state.nodes.map((item) => item.nodeId), ["attendance-doctypes", "payroll-doctypes"]);
+    assert.deepEqual(state.nodes[0]?.validation?.requiredEvidence, ["validators-ran", "locked-artifacts-unchanged"]);
+    assert.equal(state.nodes[0]?.validation?.artifactLocks?.[0]?.sha256, "b".repeat(64));
     assert.deepEqual(state.nodes[1]?.dependencyNodeIds, ["attendance-doctypes"]);
     assert.deepEqual(state.subagents.map((item) => item.subagentId), ["subagent-1"]);
     // Returned values are defensive copies.
@@ -125,7 +135,18 @@ test("sqlite store persists orchestration state across reopen", async () => {
     try {
         const firstStore = new SQLiteGoalStore({ dbPath });
         const firstRuntime = new GoalRuntime({ store: firstStore });
-        await firstRuntime.saveGoalDagNode(node({ status: "ready", lastValidationSummary: "not validated yet" }));
+        await firstRuntime.saveGoalDagNode(node({
+            status: "ready",
+            lastValidationSummary: "not validated yet",
+            kind: "implementation",
+            validation: {
+                profile: "code-change",
+                testSpecNodeId: "write-tests",
+                artifactLocks: [{ path: "tests/attendance.test.ts", sha256: "c".repeat(64), sourceNodeId: "write-tests" }],
+                requiredEvidence: ["validators-ran", "implementation-diff-present"],
+                diffBaseRef: "main",
+            },
+        }));
         await firstRuntime.saveGoalSubagent(subagent({
             status: "selfReportedComplete",
             selfReportedResult: "implemented and tested",
@@ -139,6 +160,10 @@ test("sqlite store persists orchestration state across reopen", async () => {
         assert.equal(state.nodes.length, 1);
         assert.equal(state.nodes[0]?.status, "ready");
         assert.deepEqual(state.nodes[0]?.conflictHints?.modules, ["attendance"]);
+        assert.equal(state.nodes[0]?.kind, "implementation");
+        assert.equal(state.nodes[0]?.validation?.profile, "code-change");
+        assert.deepEqual(state.nodes[0]?.validation?.requiredEvidence, ["validators-ran", "implementation-diff-present"]);
+        assert.equal(state.nodes[0]?.validation?.artifactLocks?.[0]?.sha256, "c".repeat(64));
         assert.equal(state.subagents.length, 1);
         assert.equal(state.subagents[0]?.status, "selfReportedComplete");
         assert.deepEqual(state.subagents[0]?.controllerValidationResults, ["npm test passed", "controller review pending"]);

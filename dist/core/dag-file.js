@@ -68,6 +68,8 @@ export function planGoalDagFromFileDocument(goalId, document, options = {}) {
                 slug: node.id,
                 objective: node.objective,
                 scope: node.scope,
+                kind: node.kind,
+                validation: cloneValidationContract(node.validation),
                 dependencyNodeIds: [...(node.after ?? [])],
                 expectedOutputs,
                 validators,
@@ -127,6 +129,10 @@ function parseNode(input, path) {
         node.conflicts = parseConflicts(input.conflicts, `${path}.conflicts`);
     if (input.scope !== undefined)
         node.scope = requireNonEmptyString(input.scope, `${path}.scope`);
+    if (input.kind !== undefined)
+        node.kind = requireNonEmptyString(input.kind, `${path}.kind`);
+    if (input.validation !== undefined)
+        node.validation = parseValidationContract(input.validation, `${path}.validation`);
     if (input.workspaceStrategy !== undefined)
         node.workspaceStrategy = requireNonEmptyString(input.workspaceStrategy, `${path}.workspaceStrategy`);
     if (input.risk !== undefined)
@@ -136,6 +142,48 @@ function parseNode(input, path) {
     if (input.modelScenario !== undefined)
         node.modelScenario = requireNonEmptyString(input.modelScenario, `${path}.modelScenario`);
     return node;
+}
+function parseValidationContract(input, path) {
+    if (!isRecord(input))
+        throw new Error(`Invalid goal DAG file: ${path} must be an object`);
+    const contract = {};
+    if (input.profile !== undefined)
+        contract.profile = requireNonEmptyString(input.profile, `${path}.profile`);
+    if (input.testSpecNodeId !== undefined)
+        contract.testSpecNodeId = requireKebabId(input.testSpecNodeId, `${path}.testSpecNodeId`);
+    if (input.approvedByNodeId !== undefined)
+        contract.approvedByNodeId = requireKebabId(input.approvedByNodeId, `${path}.approvedByNodeId`);
+    if (input.artifactLocks !== undefined)
+        contract.artifactLocks = parseArtifactLocks(input.artifactLocks, `${path}.artifactLocks`);
+    if (input.requiredEvidence !== undefined)
+        contract.requiredEvidence = parseStringArray(input.requiredEvidence, `${path}.requiredEvidence`);
+    if (input.onAuditTestGap !== undefined)
+        contract.onAuditTestGap = requireNonEmptyString(input.onAuditTestGap, `${path}.onAuditTestGap`);
+    if (input.diffBaseRef !== undefined)
+        contract.diffBaseRef = requireNonEmptyString(input.diffBaseRef, `${path}.diffBaseRef`);
+    if (input.auditReportPaths !== undefined)
+        contract.auditReportPaths = parseStringArray(input.auditReportPaths, `${path}.auditReportPaths`);
+    return contract;
+}
+function parseArtifactLocks(input, path) {
+    if (!Array.isArray(input))
+        throw new Error(`Invalid goal DAG file: ${path} must be an array`);
+    return input.map((item, index) => parseArtifactLock(item, `${path}[${index}]`));
+}
+function parseArtifactLock(input, path) {
+    if (!isRecord(input))
+        throw new Error(`Invalid goal DAG file: ${path} must be an object`);
+    const lock = {
+        path: requireNonEmptyString(input.path, `${path}.path`),
+        sha256: requireSha256(input.sha256, `${path}.sha256`),
+    };
+    if (input.sourceNodeId !== undefined)
+        lock.sourceNodeId = requireKebabId(input.sourceNodeId, `${path}.sourceNodeId`);
+    if (input.approvedByNodeId !== undefined)
+        lock.approvedByNodeId = requireKebabId(input.approvedByNodeId, `${path}.approvedByNodeId`);
+    if (input.approvedAt !== undefined)
+        lock.approvedAt = requireNonEmptyString(input.approvedAt, `${path}.approvedAt`);
+    return lock;
 }
 function validateFileNodeGraph(nodes) {
     const ids = new Set();
@@ -234,6 +282,12 @@ function requireNonEmptyString(input, path) {
         throw new Error(`Invalid goal DAG file: ${path} must be a non-empty string`);
     return input.trim();
 }
+function requireSha256(input, path) {
+    const value = requireNonEmptyString(input, path);
+    if (!/^[a-fA-F0-9]{64}$/.test(value))
+        throw new Error(`Invalid goal DAG file: ${path} must be a sha256 hex digest`);
+    return value.toLowerCase();
+}
 function isRecord(input) {
     return Boolean(input) && typeof input === "object" && !Array.isArray(input);
 }
@@ -244,6 +298,16 @@ function cloneConflictHints(hints) {
         files: hints.files ? [...hints.files] : undefined,
         modules: hints.modules ? [...hints.modules] : undefined,
         capabilities: hints.capabilities ? [...hints.capabilities] : undefined,
+    };
+}
+function cloneValidationContract(contract) {
+    if (!contract)
+        return undefined;
+    return {
+        ...contract,
+        artifactLocks: contract.artifactLocks?.map((lock) => ({ ...lock })),
+        requiredEvidence: contract.requiredEvidence ? [...contract.requiredEvidence] : undefined,
+        auditReportPaths: contract.auditReportPaths ? [...contract.auditReportPaths] : undefined,
     };
 }
 //# sourceMappingURL=dag-file.js.map

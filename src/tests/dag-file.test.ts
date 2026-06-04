@@ -97,3 +97,35 @@ test("goal DAG file content creates durable nodes", () => {
   assert.equal(plan.nodes[0]?.workspaceStrategy, "native-git-worktree");
   assert.deepEqual(plan.nodes[1]?.dependencyNodeIds, ["attendance-parity"]);
 });
+
+test("goal DAG file parser preserves validation contract metadata", () => {
+  const document = parseGoalDagFileContent(JSON.stringify({
+    version: 1,
+    objective: "Use test-spec workflow",
+    nodes: [
+      { id: "write-tests", objective: "Write tests", kind: "test-spec" },
+      {
+        id: "implement-feature",
+        objective: "Implement feature",
+        after: ["write-tests"],
+        kind: "implementation",
+        risk: "high",
+        validation: {
+          profile: "code-change",
+          testSpecNodeId: "write-tests",
+          artifactLocks: [{ path: "tests/feature.test.js", sha256: "a".repeat(64), sourceNodeId: "write-tests" }],
+          requiredEvidence: ["validators-ran", "locked-artifacts-unchanged"],
+          diffBaseRef: "main",
+        },
+      },
+    ],
+  }));
+  const plan = createGoalDagNodesFromFileContent("goal-1", JSON.stringify(document), { now });
+  const node = plan.nodes[1];
+
+  assert.equal(node?.kind, "implementation");
+  assert.equal(node?.validation?.profile, "code-change");
+  assert.equal(node?.validation?.testSpecNodeId, "write-tests");
+  assert.deepEqual(node?.validation?.requiredEvidence, ["validators-ran", "locked-artifacts-unchanged"]);
+  assert.equal(node?.validation?.artifactLocks?.[0]?.sha256, "a".repeat(64));
+});

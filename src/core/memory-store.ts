@@ -158,6 +158,14 @@ function cloneLedgerEvent(event: GoalLedgerEvent): GoalLedgerEvent {
 function cloneDagNode(node: GoalDagNode): GoalDagNode {
   return {
     ...node,
+    validation: node.validation
+      ? {
+          ...node.validation,
+          artifactLocks: node.validation.artifactLocks?.map((lock) => ({ ...lock })),
+          requiredEvidence: node.validation.requiredEvidence ? [...node.validation.requiredEvidence] : undefined,
+          auditReportPaths: node.validation.auditReportPaths ? [...node.validation.auditReportPaths] : undefined,
+        }
+      : undefined,
     dependencyNodeIds: [...node.dependencyNodeIds],
     expectedOutputs: [...node.expectedOutputs],
     validators: [...node.validators],

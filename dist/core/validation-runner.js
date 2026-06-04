@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, isAbsolute, resolve } from "node:path";
 export function createControllerValidationRunner(options = {}) {
     return (request) => runControllerValidation(request, options);
 }
@@ -9,6 +10,10 @@ export function runControllerValidation(request, options = {}) {
         missingOutputs: expectedOutputsMissing(request),
         skippedValidators: [],
         commandResults: [],
+        artifactLockResults: checkArtifactLocks(request),
+        satisfiedEvidence: [],
+        missingEvidence: [],
+        policyFailures: highRiskValidationPolicyFailures(request),
     };
     if (options.executeValidators) {
         result.commandResults = request.node.validators.map((command) => runValidatorCommand(command, request.subagent.workspacePath, options));
@@ -16,10 +21,19 @@ export function runControllerValidation(request, options = {}) {
     else {
         result.skippedValidators = [...request.node.validators];
     }
+    const evidence = evaluateRequiredEvidence(request, result);
+    result.satisfiedEvidence = evidence.satisfied;
+    result.missingEvidence = evidence.missing;
     const failedCommands = result.commandResults.filter((item) => !item.ok);
+    const failedLocks = result.artifactLockResults.filter((item) => !item.ok);
     const validationSignals = buildValidationSignals(result);
     const skippedValidatorsBlockPass = result.skippedValidators.length > 0 && !options.allowSkippedValidators;
-    const ok = result.missingOutputs.length === 0 && failedCommands.length === 0 && !skippedValidatorsBlockPass;
+    const ok = result.missingOutputs.length === 0 &&
+        failedCommands.length === 0 &&
+        failedLocks.length === 0 &&
+        result.missingEvidence.length === 0 &&
+        result.policyFailures.length === 0 &&
+        !skippedValidatorsBlockPass;
     if (ok) {
         const skippedSuffix = result.skippedValidators.length ? `; skipped ${result.skippedValidators.length} validator(s) by policy` : "";
         return {
@@ -31,6 +45,9 @@ export function runControllerValidation(request, options = {}) {
     const summaryParts = [
         result.missingOutputs.length ? `missing outputs: ${result.missingOutputs.join(", ")}` : undefined,
         failedCommands.length ? `failed validators: ${failedCommands.map((item) => item.command).join(", ")}` : undefined,
+        failedLocks.length ? `artifact locks changed or missing: ${failedLocks.map((item) => item.path).join(", ")}` : undefined,
+        result.missingEvidence.length ? `missing evidence: ${result.missingEvidence.join(", ")}` : undefined,
+        result.policyFailures.length ? `policy failures: ${result.policyFailures.join(", ")}` : undefined,
         skippedValidatorsBlockPass ? `skipped validators require AGENT_GOAL_PI_RUN_VALIDATORS=1 or an explicit host allow policy: ${result.skippedValidators.join(", ")}` : undefined,
     ].filter((item) => Boolean(item));
     return {
@@ -62,28 +79,140 @@ function runValidatorCommand(command, cwd, options) {
         return { command, ok: false, output: truncate(output, options.maxCommandOutputChars), error: record.message ?? String(error) };
     }
 }
+function checkArtifactLocks(request) {
+    const locks = request.node.validation?.artifactLocks ?? [];
+    const cwd = request.subagent.workspacePath;
+    return locks.map((lock) => {
+        const path = isAbsolute(lock.path) ? lock.path : cwd ? resolve(cwd, lock.path) : lock.path;
+        try {
+            const actualSha256 = sha256File(path);
+            return { path: lock.path, ok: actualSha256 === lock.sha256.toLowerCase(), expectedSha256: lock.sha256.toLowerCase(), actualSha256 };
+        }
+        catch (error) {
+            return { path: lock.path, ok: false, expectedSha256: lock.sha256.toLowerCase(), error: error instanceof Error ? error.message : String(error) };
+        }
+    });
+}
+function highRiskValidationPolicyFailures(request) {
+    const node = request.node;
+    if (node.kind !== "implementation" || node.risk !== "high")
+        return [];
+    const contract = node.validation;
+    const hasValidation = node.expectedOutputs.length > 0 ||
+        node.validators.length > 0 ||
+        Boolean(contract?.profile) ||
+        Boolean(contract?.testSpecNodeId) ||
+        Boolean(contract?.approvedByNodeId) ||
+        Boolean(contract?.artifactLocks?.length) ||
+        Boolean(contract?.requiredEvidence?.length);
+    return hasValidation ? [] : ["high-risk implementation nodes require validators, outputs, a validation profile, or an approved test contract"];
+}
+function evaluateRequiredEvidence(request, result) {
+    const required = request.node.validation?.requiredEvidence ?? [];
+    const satisfied = [];
+    const missing = [];
+    for (const item of required) {
+        if (isEvidenceSatisfied(item, request, result))
+            satisfied.push(item);
+        else
+            missing.push(item);
+    }
+    return { satisfied, missing };
+}
+function isEvidenceSatisfied(requirement, request, result) {
+    switch (requirement) {
+        case "validators-ran":
+            return request.node.validators.length > 0 && result.commandResults.length === request.node.validators.length && result.skippedValidators.length === 0;
+        case "locked-artifacts-unchanged":
+            return result.artifactLockResults.length > 0 && result.artifactLockResults.every((item) => item.ok);
+        case "implementation-diff-present":
+            return changedPaths(request).length > 0;
+        case "non-test-diff-present":
+            return changedPaths(request).some((path) => !isTestOrValidationArtifactPath(path, request));
+        case "post-merge-validation-ran":
+            return request.node.validators.length > 0 && result.commandResults.length === request.node.validators.length && result.skippedValidators.length === 0;
+        case "audit-report-present":
+            return auditReportPaths(request).some((path) => existsSync(path));
+        default:
+            return false;
+    }
+}
+function changedPaths(request) {
+    const cwd = request.subagent.workspacePath;
+    if (!cwd)
+        return [];
+    const paths = new Set();
+    const baseRef = request.node.validation?.diffBaseRef;
+    if (baseRef) {
+        const diff = safeExec("git", ["diff", "--name-only", `${baseRef}...HEAD`], cwd);
+        for (const line of diff.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))
+            paths.add(line);
+    }
+    const status = safeExec("git", ["status", "--short", "--untracked-files=all"], cwd);
+    for (const line of status.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+        const path = line.length > 3 ? line.slice(3).trim() : line;
+        if (path)
+            paths.add(path.replace(/^"|"$/g, ""));
+    }
+    return [...paths];
+}
+function isTestOrValidationArtifactPath(path, request) {
+    if ((request.node.validation?.artifactLocks ?? []).some((lock) => lock.path === path))
+        return true;
+    return /(^|\/)(tests?|specs?|validators?|validation)(\/|$)/i.test(path) || /(^|\/)(test|spec|validator)[^/]*\./i.test(path);
+}
+function auditReportPaths(request) {
+    const cwd = request.subagent.workspacePath;
+    return (request.node.validation?.auditReportPaths ?? [])
+        .concat((request.node.validation?.artifactLocks ?? []).filter((lock) => basename(lock.path).toLowerCase() === "report.md").map((lock) => lock.path))
+        .map((path) => isAbsolute(path) ? path : cwd ? resolve(cwd, path) : path);
+}
 function buildValidationSignals(result) {
     const signals = [];
     for (const output of result.missingOutputs)
         signals.push(`missing output: ${output}`);
+    for (const lock of result.artifactLockResults) {
+        signals.push(`${lock.ok ? "passed" : "failed"} artifact lock: ${lock.path}${lock.actualSha256 ? ` sha256=${lock.actualSha256}` : ""}${lock.error ? ` error=${lock.error}` : ""}`);
+    }
     for (const command of result.commandResults) {
         signals.push(`${command.ok ? "passed" : "failed"} validator: ${command.command}${command.output ? `\n${command.output}` : ""}`);
     }
     for (const command of result.skippedValidators)
         signals.push(`skipped validator by policy: ${command}`);
+    for (const evidence of result.satisfiedEvidence)
+        signals.push(`satisfied evidence: ${evidence}`);
+    for (const evidence of result.missingEvidence)
+        signals.push(`missing evidence: ${evidence}`);
+    for (const failure of result.policyFailures)
+        signals.push(`policy failure: ${failure}`);
     if (signals.length === 0)
-        signals.push("self-report accepted; no expected outputs or executable validators configured");
+        signals.push("self-report accepted; no expected outputs, executable validators, artifact locks, or required evidence configured");
     return signals;
 }
 function defaultFollowupPrompt(request, result) {
     const failedCommands = result.commandResults.filter((item) => !item.ok);
+    const failedLocks = result.artifactLockResults.filter((item) => !item.ok);
     return [
         `Controller validation for DAG node ${request.node.nodeId} did not pass.`,
         result.missingOutputs.length ? `Create or fix the missing expected outputs: ${result.missingOutputs.join(", ")}.` : undefined,
         failedCommands.length ? `Fix the failing validators: ${failedCommands.map((item) => item.command).join(", ")}.` : undefined,
+        failedLocks.length ? `Restore or explicitly revise the locked validation artifacts: ${failedLocks.map((item) => item.path).join(", ")}.` : undefined,
+        result.missingEvidence.length ? `Provide the missing validation evidence: ${result.missingEvidence.join(", ")}.` : undefined,
+        result.policyFailures.length ? `Resolve validation policy failures: ${result.policyFailures.join(", ")}.` : undefined,
         result.skippedValidators.length ? "Controller validators were configured but not executed by host policy; ask the controller operator to reload Pi with AGENT_GOAL_PI_RUN_VALIDATORS=1 before accepting completion." : undefined,
         "After addressing the issues, report again with SUBAGENT_RESULT: <summary>.",
     ].filter((line) => Boolean(line)).join("\n");
+}
+function sha256File(path) {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+function safeExec(command, args, cwd) {
+    try {
+        return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    }
+    catch {
+        return "";
+    }
 }
 function truncate(value, maxChars = 4_000) {
     if (!value)

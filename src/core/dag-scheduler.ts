@@ -5,6 +5,8 @@ export interface GoalDagPlanNodeInput {
   slug?: string;
   objective: string;
   scope?: string;
+  kind?: GoalDagNode["kind"];
+  validation?: GoalDagNode["validation"];
   dependencyNodeIds?: string[];
   expectedOutputs?: string[];
   validators?: string[];
@@ -62,6 +64,8 @@ export function createGoalDagNodes(goalId: string, inputs: GoalDagPlanNodeInput[
       slug,
       objective: input.objective,
       scope: input.scope,
+      kind: input.kind,
+      validation: cloneValidationContract(input.validation),
       dependencyNodeIds: [...(input.dependencyNodeIds ?? [])],
       expectedOutputs: [...(input.expectedOutputs ?? [])],
       validators: [...(input.validators ?? [])],
@@ -266,6 +270,16 @@ function cloneConflictHints(hints: GoalDagConflictHints | undefined): GoalDagCon
     files: hints.files ? [...hints.files] : undefined,
     modules: hints.modules ? [...hints.modules] : undefined,
     capabilities: hints.capabilities ? [...hints.capabilities] : undefined,
+  };
+}
+
+function cloneValidationContract(contract: GoalDagNode["validation"]): GoalDagNode["validation"] {
+  if (!contract) return undefined;
+  return {
+    ...contract,
+    artifactLocks: contract.artifactLocks?.map((lock) => ({ ...lock })),
+    requiredEvidence: contract.requiredEvidence ? [...contract.requiredEvidence] : undefined,
+    auditReportPaths: contract.auditReportPaths ? [...contract.auditReportPaths] : undefined,
   };
 }
 

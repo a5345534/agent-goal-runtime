@@ -145,15 +145,17 @@ export class SQLiteGoalStore {
     async saveGoalDagNode(node) {
         this.db
             .prepare(`INSERT INTO goal_dag_nodes (
-          goal_id, node_id, slug, objective, scope, dependency_node_ids_json,
+          goal_id, node_id, slug, objective, scope, kind, validation_json, dependency_node_ids_json,
           expected_outputs_json, validators_json, workspace_strategy, risk,
           model_scenario, model_arg, conflict_hints_json, completion_gates_json, status, last_validation_summary,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, node_id) DO UPDATE SET
           slug = excluded.slug,
           objective = excluded.objective,
           scope = excluded.scope,
+          kind = excluded.kind,
+          validation_json = excluded.validation_json,
           dependency_node_ids_json = excluded.dependency_node_ids_json,
           expected_outputs_json = excluded.expected_outputs_json,
           validators_json = excluded.validators_json,
@@ -166,7 +168,7 @@ export class SQLiteGoalStore {
           status = excluded.status,
           last_validation_summary = excluded.last_validation_summary,
           updated_at = excluded.updated_at`)
-            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
+            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, node.kind ?? null, node.validation === undefined ? null : JSON.stringify(node.validation), JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
     }
     async getGoalDagNode(goalId, nodeId) {
         const row = this.db
@@ -330,6 +332,8 @@ export class SQLiteGoalStore {
         slug TEXT NOT NULL,
         objective TEXT NOT NULL,
         scope TEXT,
+        kind TEXT,
+        validation_json TEXT,
         dependency_node_ids_json TEXT NOT NULL,
         expected_outputs_json TEXT NOT NULL,
         validators_json TEXT NOT NULL,
@@ -372,6 +376,8 @@ export class SQLiteGoalStore {
     `);
         addColumnIfMissing(this.db, "goal_dag_nodes", "model_scenario", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "model_arg", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "kind", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_scenario", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_arg", "TEXT");
     }
@@ -485,6 +491,8 @@ function rowToDagNode(row) {
         slug: row.slug,
         objective: row.objective,
         scope: row.scope ?? undefined,
+        kind: row.kind ?? undefined,
+        validation: parseValidationContract(row.validation_json),
         dependencyNodeIds: parseStringArray(row.dependency_node_ids_json),
         expectedOutputs: parseStringArray(row.expected_outputs_json),
         validators: parseStringArray(row.validators_json),
@@ -540,6 +548,19 @@ function parseStringArray(json) {
     }
     catch {
         return [];
+    }
+}
+function parseValidationContract(json) {
+    if (!json)
+        return undefined;
+    try {
+        const parsed = JSON.parse(json);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            return undefined;
+        return parsed;
+    }
+    catch {
+        return undefined;
     }
 }
 function parseConflictHints(json) {

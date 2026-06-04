@@ -1178,6 +1178,9 @@ async function formatGoalOrchestrationDetails(runtime: GoalRuntime, goalId: stri
     lines.push(`  ${index + 1}. [${node.status}] ${title}`);
     lines.push(`     id: ${shortenMiddle(node.nodeId, 86)}`);
     if (node.modelScenario || node.modelArg) lines.push(`     model: ${formatGoalModel(node.modelScenario, node.modelArg)}`);
+    if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
+      lines.push(`     validation contract: ${formatGoalValidationContract(node)}`);
+    }
     for (const line of wrapDisplayText(node.objective, 86)) lines.push(`     objective: ${line}`);
     if (node.dependencyNodeIds.length) lines.push(`     deps: ${node.dependencyNodeIds.map((dep) => shortenMiddle(dep, 28)).join(", ")}`);
     if (node.lastValidationSummary) {
@@ -1863,4 +1866,14 @@ function formatTokenCount(value: number): string {
 function formatGoalModel(scenario: string | undefined, model: string | undefined): string {
   if (scenario && model) return `${scenario} -> ${model}`;
   return model ?? scenario ?? "not recorded";
+}
+
+function formatGoalValidationContract(node: GoalDagNode): string {
+  const parts = [
+    node.kind ? `kind=${node.kind}` : undefined,
+    node.validation?.profile ? `profile=${node.validation.profile}` : undefined,
+    node.validation?.requiredEvidence?.length ? `evidence=${node.validation.requiredEvidence.join(",")}` : undefined,
+    node.validation?.artifactLocks?.length ? `locks=${node.validation.artifactLocks.length}` : undefined,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join(" ") : "not configured";
 }

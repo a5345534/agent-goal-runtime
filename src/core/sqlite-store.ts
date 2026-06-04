@@ -102,6 +102,8 @@ interface SqliteDagNodeRow {
   slug: string;
   objective: string;
   scope: string | null;
+  kind: string | null;
+  validation_json: string | null;
   dependency_node_ids_json: string;
   expected_outputs_json: string;
   validators_json: string;
@@ -352,15 +354,17 @@ export class SQLiteGoalStore implements GoalStore {
     this.db
       .prepare(
         `INSERT INTO goal_dag_nodes (
-          goal_id, node_id, slug, objective, scope, dependency_node_ids_json,
+          goal_id, node_id, slug, objective, scope, kind, validation_json, dependency_node_ids_json,
           expected_outputs_json, validators_json, workspace_strategy, risk,
           model_scenario, model_arg, conflict_hints_json, completion_gates_json, status, last_validation_summary,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, node_id) DO UPDATE SET
           slug = excluded.slug,
           objective = excluded.objective,
           scope = excluded.scope,
+          kind = excluded.kind,
+          validation_json = excluded.validation_json,
           dependency_node_ids_json = excluded.dependency_node_ids_json,
           expected_outputs_json = excluded.expected_outputs_json,
           validators_json = excluded.validators_json,
@@ -380,6 +384,8 @@ export class SQLiteGoalStore implements GoalStore {
         node.slug,
         node.objective,
         node.scope ?? null,
+        node.kind ?? null,
+        node.validation === undefined ? null : JSON.stringify(node.validation),
         JSON.stringify(node.dependencyNodeIds),
         JSON.stringify(node.expectedOutputs),
         JSON.stringify(node.validators),
@@ -593,6 +599,8 @@ export class SQLiteGoalStore implements GoalStore {
         slug TEXT NOT NULL,
         objective TEXT NOT NULL,
         scope TEXT,
+        kind TEXT,
+        validation_json TEXT,
         dependency_node_ids_json TEXT NOT NULL,
         expected_outputs_json TEXT NOT NULL,
         validators_json TEXT NOT NULL,
@@ -635,6 +643,8 @@ export class SQLiteGoalStore implements GoalStore {
     `);
     addColumnIfMissing(this.db, "goal_dag_nodes", "model_scenario", "TEXT");
     addColumnIfMissing(this.db, "goal_dag_nodes", "model_arg", "TEXT");
+    addColumnIfMissing(this.db, "goal_dag_nodes", "kind", "TEXT");
+    addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
     addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_scenario", "TEXT");
     addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_arg", "TEXT");
   }
@@ -755,6 +765,8 @@ function rowToDagNode(row: SqliteDagNodeRow): GoalDagNode {
     slug: row.slug,
     objective: row.objective,
     scope: row.scope ?? undefined,
+    kind: row.kind ?? undefined,
+    validation: parseValidationContract(row.validation_json),
     dependencyNodeIds: parseStringArray(row.dependency_node_ids_json),
     expectedOutputs: parseStringArray(row.expected_outputs_json),
     validators: parseStringArray(row.validators_json),
@@ -810,6 +822,17 @@ function parseStringArray(json: string): string[] {
     return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
   } catch {
     return [];
+  }
+}
+
+function parseValidationContract(json: string | null): GoalDagNode["validation"] | undefined {
+  if (!json) return undefined;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as GoalDagNode["validation"];
+  } catch {
+    return undefined;
   }
 }
 

@@ -35,6 +35,39 @@
         "capabilities": { "$ref": "#/$defs/stringList" }
       }
     },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "artifactLock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sourceNodeId": { "$ref": "#/$defs/kebabId" },
+        "approvedByNodeId": { "$ref": "#/$defs/kebabId" },
+        "approvedAt": { "type": "string", "minLength": 1 }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "type": "string", "minLength": 1 },
+        "testSpecNodeId": { "$ref": "#/$defs/kebabId" },
+        "approvedByNodeId": { "$ref": "#/$defs/kebabId" },
+        "artifactLocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactLock" }
+        },
+        "requiredEvidence": { "$ref": "#/$defs/stringList" },
+        "onAuditTestGap": { "type": "string", "minLength": 1 },
+        "diffBaseRef": { "type": "string", "minLength": 1 },
+        "auditReportPaths": { "$ref": "#/$defs/stringList" }
+      }
+    },
     "scenarioId": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$"
@@ -119,6 +152,8 @@
         "validators": { "$ref": "#/$defs/stringList" },
         "conflicts": { "$ref": "#/$defs/conflicts" },
         "scope": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "validation": { "$ref": "#/$defs/validation" },
         "workspaceStrategy": { "type": "string", "minLength": 1 },
         "risk": { "enum": ["low", "medium", "high"] },
         "completionGates": { "$ref": "#/$defs/stringList" },

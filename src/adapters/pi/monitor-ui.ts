@@ -219,6 +219,9 @@ function renderDagLines(snapshot: GoalMonitorDagSnapshot, now: Date): string[] {
     const nodeActivity = formatAgo(node.updatedAt, now);
     lines.push(`${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 72)} runtime=${nodeRuntime} updated=${nodeActivity}`);
     if (node.modelScenario || node.modelArg) lines.push(`   model: ${formatMonitorModel(node.modelScenario, node.modelArg)}`);
+    if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
+      lines.push(`   validation contract: ${formatMonitorValidationContract(node)}`);
+    }
     if (node.lastValidationSummary) lines.push(`   validation: ${shortenMiddle(node.lastValidationSummary, 92)}`);
     const subagents = subagentsByNode.get(node.nodeId) ?? [];
     if (subagents.length === 0) {
@@ -260,6 +263,16 @@ function formatMonitorTokens(goal: GoalSummary): string {
 function formatMonitorModel(scenario: string | undefined, model: string | undefined): string {
   if (scenario && model) return `${scenario} -> ${model}`;
   return model ?? scenario ?? "-";
+}
+
+function formatMonitorValidationContract(node: GoalDagNode): string {
+  const parts = [
+    node.kind ? `kind=${node.kind}` : undefined,
+    node.validation?.profile ? `profile=${node.validation.profile}` : undefined,
+    node.validation?.requiredEvidence?.length ? `evidence=${node.validation.requiredEvidence.join(",")}` : undefined,
+    node.validation?.artifactLocks?.length ? `locks=${node.validation.artifactLocks.length}` : undefined,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length ? shortenMiddle(parts.join(" "), 120) : "-";
 }
 
 function formatCompactNumber(value: number): string {
