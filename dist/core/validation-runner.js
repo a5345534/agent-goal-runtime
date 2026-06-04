@@ -15,7 +15,8 @@ export function runControllerValidation(request, options = {}) {
         missingEvidence: [],
         policyFailures: highRiskValidationPolicyFailures(request),
     };
-    if (options.executeValidators) {
+    const executeValidators = options.executeValidators !== false;
+    if (executeValidators) {
         result.commandResults = request.node.validators.map((command) => runValidatorCommand(command, request.subagent.workspacePath, options));
     }
     else {
@@ -27,7 +28,7 @@ export function runControllerValidation(request, options = {}) {
     const failedCommands = result.commandResults.filter((item) => !item.ok);
     const failedLocks = result.artifactLockResults.filter((item) => !item.ok);
     const validationSignals = buildValidationSignals(result);
-    const skippedValidatorsBlockPass = result.skippedValidators.length > 0 && !options.allowSkippedValidators;
+    const skippedValidatorsBlockPass = result.skippedValidators.length > 0;
     const ok = result.missingOutputs.length === 0 &&
         failedCommands.length === 0 &&
         failedLocks.length === 0 &&
@@ -35,10 +36,9 @@ export function runControllerValidation(request, options = {}) {
         result.policyFailures.length === 0 &&
         !skippedValidatorsBlockPass;
     if (ok) {
-        const skippedSuffix = result.skippedValidators.length ? `; skipped ${result.skippedValidators.length} validator(s) by policy` : "";
         return {
             status: "passed",
-            summary: `Controller validation passed (${validationSignals.length} signal(s)${skippedSuffix}).`,
+            summary: `Controller validation passed (${validationSignals.length} signal(s)).`,
             validationSignals,
         };
     }
@@ -48,7 +48,7 @@ export function runControllerValidation(request, options = {}) {
         failedLocks.length ? `artifact locks changed or missing: ${failedLocks.map((item) => item.path).join(", ")}` : undefined,
         result.missingEvidence.length ? `missing evidence: ${result.missingEvidence.join(", ")}` : undefined,
         result.policyFailures.length ? `policy failures: ${result.policyFailures.join(", ")}` : undefined,
-        skippedValidatorsBlockPass ? `skipped validators require AGENT_GOAL_PI_RUN_VALIDATORS=1 or an explicit host allow policy: ${result.skippedValidators.join(", ")}` : undefined,
+        skippedValidatorsBlockPass ? `skipped validators are not accepted: ${result.skippedValidators.join(", ")}` : undefined,
     ].filter((item) => Boolean(item));
     return {
         status: "failed",
@@ -199,7 +199,7 @@ function defaultFollowupPrompt(request, result) {
         failedLocks.length ? `Restore or explicitly revise the locked validation artifacts: ${failedLocks.map((item) => item.path).join(", ")}.` : undefined,
         result.missingEvidence.length ? `Provide the missing validation evidence: ${result.missingEvidence.join(", ")}.` : undefined,
         result.policyFailures.length ? `Resolve validation policy failures: ${result.policyFailures.join(", ")}.` : undefined,
-        result.skippedValidators.length ? "Controller validators were configured but not executed by host policy; ask the controller operator to reload Pi with AGENT_GOAL_PI_RUN_VALIDATORS=1 before accepting completion." : undefined,
+        result.skippedValidators.length ? "Controller validators were configured but explicitly skipped by host policy; enable validator execution before accepting completion." : undefined,
         "After addressing the issues, report again with SUBAGENT_RESULT: <summary>.",
     ].filter((line) => Boolean(line)).join("\n");
 }

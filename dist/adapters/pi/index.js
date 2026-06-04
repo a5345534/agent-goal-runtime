@@ -467,7 +467,7 @@ function buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting = rea
                 },
             };
         },
-        validator: createControllerValidationRunner({ executeValidators: readPiGoalRunValidators() }),
+        validator: createControllerValidationRunner(),
         metadata: { controllerGoalId: goal.goalId },
     };
 }
@@ -711,10 +711,6 @@ function readPiGoalControllerLeaseMs() {
             return parsed;
     }
     return Math.max(120_000, readPiGoalControllerPollMs() * 30);
-}
-function readPiGoalRunValidators() {
-    const raw = process.env.AGENT_GOAL_PI_RUN_VALIDATORS ?? process.env.PI_GOAL_RUN_VALIDATORS;
-    return raw === "1" || raw === "true" || raw === "yes";
 }
 function readPiGoalMaxSubagents() {
     const raw = process.env.AGENT_GOAL_PI_MAX_SUBAGENTS;

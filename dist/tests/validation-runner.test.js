@@ -38,7 +38,7 @@ function request(overrides = {}) {
         ...overrides,
     };
 }
-test("controller validation runner fails skipped validators by default", () => {
+test("controller validation runner fails skipped validators when explicitly disabled", () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-validation-"));
     try {
         writeFileSync(join(dir, "README.md"), "ok\n");
@@ -47,24 +47,9 @@ test("controller validation runner fails skipped validators by default", () => {
             subagent: { ...request().subagent, workspacePath: dir },
         }), { executeValidators: false });
         assert.equal(result.status, "failed");
-        assert.match(result.summary ?? "", /skipped validators require AGENT_GOAL_PI_RUN_VALIDATORS=1/);
-        assert.match(result.followupPrompt ?? "", /AGENT_GOAL_PI_RUN_VALIDATORS=1/);
+        assert.match(result.summary ?? "", /skipped validators are not accepted/);
+        assert.match(result.followupPrompt ?? "", /explicitly skipped by host policy/);
         assert.deepEqual(result.validationSignals, ["skipped validator by policy: npm test"]);
-    }
-    finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
-});
-test("controller validation runner can explicitly allow skipped validators", () => {
-    const dir = mkdtempSync(join(tmpdir(), "goal-validation-"));
-    try {
-        writeFileSync(join(dir, "README.md"), "ok\n");
-        const result = runControllerValidation(request({
-            node: { ...request().node, expectedOutputs: ["README.md"], validators: ["npm test"] },
-            subagent: { ...request().subagent, workspacePath: dir },
-        }), { executeValidators: false, allowSkippedValidators: true });
-        assert.equal(result.status, "passed");
-        assert.match(result.summary ?? "", /skipped 1 validator/);
     }
     finally {
         rmSync(dir, { recursive: true, force: true });
@@ -85,16 +70,16 @@ test("controller validation runner fails missing expected outputs with follow-up
         rmSync(dir, { recursive: true, force: true });
     }
 });
-test("controller validation runner can execute shell validators when explicitly enabled", async () => {
+test("controller validation runner executes shell validators by default", async () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-validation-"));
     try {
         const passing = runControllerValidation(request({
             node: { ...request().node, validators: ["printf validator-ok"] },
             subagent: { ...request().subagent, workspacePath: dir },
-        }), { executeValidators: true });
+        }));
         assert.equal(passing.status, "passed");
         assert.match(passing.validationSignals?.[0] ?? "", /validator-ok/);
-        const failing = await createControllerValidationRunner({ executeValidators: true })(request({
+        const failing = await createControllerValidationRunner()(request({
             node: { ...request().node, validators: ["echo nope && exit 7"] },
             subagent: { ...request().subagent, workspacePath: dir },
         }));

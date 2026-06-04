@@ -156,7 +156,7 @@ When implementation self-reports completion, controller validation performs:
 
 1. sync subagent state,
 2. verify locked artifacts unchanged,
-3. run declared validators when host policy allows,
+3. run declared validators unconditionally,
 4. check required evidence,
 5. persist command outputs and evidence summary,
 6. mark node complete / needsFollowup / blocked / failed.
@@ -251,7 +251,7 @@ Because current DAGs are acyclic, the first implementation can support this as a
 
 Initial generic enforcement rules:
 
-1. If `validators.length > 0` and validators are skipped, validation fails unless an explicit host allow policy is set.
+1. If `validators.length > 0`, declared validators must execute; skipped validators fail validation.
 2. If `risk=high` and `kind=implementation`, require at least one of:
    - validators,
    - approved test-spec contract,

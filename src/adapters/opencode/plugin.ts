@@ -603,7 +603,7 @@ async function startOpencodeOrchestratedGoal(
         controllerModelReason: controllerModel.reason,
       },
     }),
-    validator: createControllerValidationRunner({ executeValidators: readOpencodeRunValidators() }),
+    validator: createControllerValidationRunner(),
     metadata: {
       controllerGoalId: created.goal.goalId,
       controllerModel: controllerModel.model,
@@ -686,7 +686,7 @@ async function runOpencodeControllerPoll(
         },
       };
     },
-    validator: createControllerValidationRunner({ executeValidators: readOpencodeRunValidators() }),
+    validator: createControllerValidationRunner(),
     metadata: { controllerGoalId: goal.goalId },
   });
   if (await shouldStopOpencodeControllerPolling(ctx, goal.goalId)) {
@@ -733,11 +733,6 @@ function readOpencodeControllerPollMs(): number {
   if (!raw) return 5_000;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
-}
-
-function readOpencodeRunValidators(): boolean {
-  const raw = process.env.AGENT_GOAL_OPENCODE_RUN_VALIDATORS ?? process.env.AGENT_GOAL_PI_RUN_VALIDATORS;
-  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 function readOpencodeMaxSubagents(): number {

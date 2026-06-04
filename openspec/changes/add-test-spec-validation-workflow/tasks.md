@@ -62,7 +62,7 @@
 
 - [x] Show node kind, validation profile, and required evidence contract in `/goal status`.
 - [x] Show node kind/profile and concise validation contract in `/goal monitor` DAG lines.
-- [x] Document that Pi operators must set `AGENT_GOAL_PI_RUN_VALIDATORS=1` for shell validator execution.
+- [x] Document that Pi/OpenCode controller validation always executes declared shell validators.
 - [x] Ensure skipped validators surface as actionable validation failures, not silent warnings.
 
 ## 7. Documentation and Examples
@@ -91,7 +91,7 @@
 - [x] Run `npm test`.
 - [x] Run OpenSpec source-manifest rebuild and validation.
 - [x] Generate and validate explainer HTML.
-- [ ] [BACKLOG] Smoke-test an example DAG in Pi with `AGENT_GOAL_PI_RUN_VALIDATORS=1`.
+- [ ] [BACKLOG] Smoke-test an example DAG in Pi without validator env flags.
 
 ## 10. Follow-up Backlog
 

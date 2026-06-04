@@ -1,16 +1,11 @@
 import type { GoalControllerValidationRequest, GoalControllerValidationResult, GoalControllerValidator } from "./controller-loop.js";
 export interface ControllerValidationRunnerOptions {
-    /** Execute node.validators as shell commands. Defaults false; command execution must be an explicit host policy choice. */
+    /** Execute node.validators as shell commands. Defaults true so declared validators are enforced. */
     executeValidators?: boolean;
     /** Maximum captured stdout/stderr characters per command. Defaults 4000. */
     maxCommandOutputChars?: number;
     /** Build a follow-up prompt for failed validation. */
     renderFollowupPrompt?: (request: GoalControllerValidationRequest, result: ControllerValidationRunResult) => string;
-    /**
-     * Allow configured validators to be skipped while still passing validation.
-     * Defaults false so a node that declares validators cannot pass on self-report alone.
-     */
-    allowSkippedValidators?: boolean;
 }
 export interface ControllerValidationCommandResult {
     command: string;

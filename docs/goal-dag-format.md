@@ -340,15 +340,7 @@ The runtime rejects invalid DAG files before starting work:
 
 ## Validator execution
 
-Validators are recorded in the DAG by default. Pi executes validators only when validator execution is explicitly enabled:
-
-```bash
-AGENT_GOAL_PI_RUN_VALIDATORS=1
-# or
-PI_GOAL_RUN_VALIDATORS=1
-```
-
-When disabled, validators are reported as skipped controller checks rather than run in the shell.
+Validators are recorded in the DAG by default. Pi and OpenCode controller validation always execute declared shell validators. Nodes that declare validators cannot pass validation on self-report alone; if a custom host explicitly disables validator execution, skipped validators are treated as failed validation evidence.
 
 ## Text objective behavior
 
