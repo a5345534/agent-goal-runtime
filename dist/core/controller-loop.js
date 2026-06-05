@@ -29,8 +29,35 @@ const TRANSIENT_ERROR_PATTERNS = [
     /network error/i,
     /An error occurred while processing your request/i,
 ];
+const CONTEXT_EXCEEDED_PATTERNS = [
+    /context_length_exceeded/i,
+    /context window/i,
+    /input exceeds/i,
+    /too many tokens/i,
+    /maximum context length/i,
+    /reduce the length/i,
+];
+const CONTEXT_FALLBACK_MODELS = {
+    "openai-codex/gpt-5.3-codex-spark": "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4-flash": "deepseek/deepseek-v4-pro",
+    "minimax/MiniMax-M3": "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4-pro": "deepseek/deepseek-v4-pro", // already largest, no fallback
+    "openai-codex/gpt-5.5": "deepseek/deepseek-v4-pro",
+};
 function isTransientError(message) {
     return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+function isContextExceededError(message) {
+    return CONTEXT_EXCEEDED_PATTERNS.some((pattern) => pattern.test(message));
+}
+function contextFallbackModel(currentModel) {
+    if (!currentModel)
+        return undefined;
+    const fallback = CONTEXT_FALLBACK_MODELS[currentModel];
+    // Don't fallback if already on the largest model
+    if (fallback === currentModel)
+        return undefined;
+    return fallback;
 }
 function buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries) {
     return [
@@ -41,6 +68,80 @@ function buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries) {
         `Report with SUBAGENT_RESULT: <summary> when done, or SUBAGENT_BLOCKED: <reason> if blocked.`,
         `Retry ${retryCount + 1}/${maxRetries}.`,
     ].join("\n");
+}
+function buildContextUpgradePrompt(node, oldModel, newModel) {
+    return [
+        `[SYSTEM RECOVERY] The previous model (${oldModel}) ran out of context window.`,
+        `You have been restarted with a larger-context model: ${newModel}.`,
+        `Please resume your work on: "${node.objective}"`,
+        `Report with SUBAGENT_RESULT: <summary> when done, or SUBAGENT_BLOCKED: <reason> if blocked.`,
+    ].join("\n");
+}
+async function tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state, result, options, tickStartedAt) {
+    const errorMessage = subagent.integrationStatus ?? subagent.selfReportedResult ?? "unknown error";
+    const maxRetries = options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT;
+    const retryCount = subagent.retryCount ?? 0;
+    if (!isTransientError(errorMessage) && !isContextExceededError(errorMessage))
+        return false;
+    if (retryCount >= maxRetries && !isContextExceededError(errorMessage))
+        return false;
+    const isContext = isContextExceededError(errorMessage);
+    const oldModel = node.modelArg ?? subagent.workspacePath ?? "unknown";
+    if (isContext) {
+        const fallback = contextFallbackModel(node.modelArg);
+        if (!fallback)
+            return false; // No larger model available, let it fail permanently
+        await runtime.saveGoalDagNode(withNodePatch(node, {
+            status: "running",
+            modelArg: fallback,
+            thinkingLevel: "high",
+            lastValidationSummary: `auto-escalated from ${node.modelArg ?? "unknown"} to ${fallback} (context exceeded)`,
+            updatedAt: tickStartedAt,
+        }));
+        node = { ...node, modelArg: fallback, thinkingLevel: "high" };
+        const recoveryPrompt = buildContextUpgradePrompt(node, oldModel, fallback);
+        const allocation = await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt });
+        const startOptions = {
+            subagentId: allocation?.subagentId,
+            cwd: allocation?.cwd ?? subagent.workspacePath,
+            branch: allocation?.branch ?? subagent.branch,
+            ref: allocation?.ref ?? subagent.ref,
+            initialPrompt: recoveryPrompt,
+            metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+            now: tickStartedAt,
+            thinkingLevel: "high",
+        };
+        await runtime.saveGoalSubagent(withSubagentPatch(subagent, {
+            status: "failed",
+            integrationStatus: `context exceeded with ${oldModel}; auto-escalated to ${fallback}`,
+            retryCount: (subagent.retryCount ?? 0) + 1,
+        }));
+        const newSubagent = await runtime.startGoalSubagent(adapter, node, startOptions);
+        result.started.push(newSubagent);
+        return true;
+    }
+    // Transient error retry
+    const recoveryPrompt = buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries);
+    const allocation = await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt });
+    const startOptions = {
+        subagentId: allocation?.subagentId,
+        cwd: allocation?.cwd ?? subagent.workspacePath,
+        branch: allocation?.branch ?? subagent.branch,
+        ref: allocation?.ref ?? subagent.ref,
+        initialPrompt: recoveryPrompt,
+        metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+        now: tickStartedAt,
+        thinkingLevel: node.thinkingLevel,
+    };
+    await runtime.saveGoalSubagent(withSubagentPatch(subagent, {
+        status: "failed",
+        integrationStatus: `auto-retry ${retryCount + 1}/${maxRetries}: ${errorMessage}`,
+        retryCount: retryCount + 1,
+    }));
+    await runtime.saveGoalDagNode(withNodePatch(node, { status: "running", updatedAt: tickStartedAt }));
+    const newSubagent = await runtime.startGoalSubagent(adapter, node, startOptions);
+    result.started.push(newSubagent);
+    return true;
 }
 export async function runGoalControllerTick(runtime, goalId, options) {
     const tickStartedAt = toIso(resolveNow(options.now));
@@ -58,7 +159,7 @@ export async function runGoalControllerTick(runtime, goalId, options) {
         changed: false,
     };
     const initialState = await runtime.getGoalOrchestrationState(goalId);
-    await syncSubagents(runtime, options.adapter, initialState, result, options);
+    await syncSubagents(runtime, options.adapter, initialState, result, options, tickStartedAt);
     await reconcileSubagentOutcomes(runtime, goalId, options, result, tickStartedAt);
     await startReadyNodes(runtime, goalId, options, result, tickStartedAt);
     result.changed =
@@ -88,7 +189,7 @@ export async function runGoalControllerLoop(runtime, goalId, options) {
     }
     return { goalId, ticks };
 }
-async function syncSubagents(runtime, adapter, state, result, options) {
+async function syncSubagents(runtime, adapter, state, result, options, tickStartedAt) {
     for (const subagent of state.subagents) {
         if (subagent.harnessAdapterId !== adapter.adapterId)
             continue;
@@ -104,37 +205,13 @@ async function syncSubagents(runtime, adapter, state, result, options) {
                 continue;
             const errorMessage = error instanceof Error ? error.message : String(error);
             const node = state.nodes.find((item) => item.nodeId === subagent.nodeId);
-            const maxRetries = options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT;
-            const retryCount = subagent.retryCount ?? 0;
-            if (node && isTransientError(errorMessage) && retryCount < maxRetries) {
-                // Auto-retry: restart the subagent with a recovery prompt
+            if (node) {
                 try {
-                    const recoveryPrompt = buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries);
-                    const allocation = await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt: subagent.updatedAt });
-                    const startOptions = {
-                        subagentId: allocation?.subagentId,
-                        cwd: allocation?.cwd ?? subagent.workspacePath,
-                        branch: allocation?.branch ?? subagent.branch,
-                        ref: allocation?.ref ?? subagent.ref,
-                        initialPrompt: allocation?.initialPrompt ?? recoveryPrompt,
-                        metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
-                        now: subagent.updatedAt,
-                        thinkingLevel: node.thinkingLevel,
-                    };
-                    await runtime.saveGoalDagNode(withNodePatch(node, { status: "running", updatedAt: toIso(resolveNow(options.now)) }));
-                    await runtime.saveGoalSubagent(withSubagentPatch(subagent, {
-                        status: "failed",
-                        integrationStatus: `auto-retry ${retryCount + 1}/${maxRetries}: ${errorMessage}`,
-                        retryCount: retryCount + 1,
-                    }));
-                    const newSubagent = await runtime.startGoalSubagent(adapter, node, startOptions);
-                    result.started.push(newSubagent);
-                    result.changed = true;
-                    continue;
+                    const recovered = await tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state, result, options, tickStartedAt);
+                    if (recovered)
+                        continue;
                 }
-                catch (retryError) {
-                    // Retry itself failed — fall through to permanent failure
-                }
+                catch (_retryError) { /* fall through */ }
             }
             const failed = withSubagentPatch(subagent, {
                 status: "failed",
@@ -163,39 +240,14 @@ async function reconcileSubagentOutcomes(runtime, goalId, options, result, tickS
             continue;
         }
         if (subagent.status === "failed") {
-            const errorMessage = subagent.integrationStatus ?? subagent.selfReportedResult ?? "unknown error";
-            const maxRetries = options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT;
-            const retryCount = subagent.retryCount ?? 0;
-            if (isTransientError(errorMessage) && retryCount < maxRetries) {
-                // Auto-retry: restart with recovery prompt
-                try {
-                    const recoveryPrompt = buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries);
-                    const allocation = await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: subagent.harnessAdapterId, tickStartedAt });
-                    const startOptions = {
-                        subagentId: allocation?.subagentId,
-                        cwd: allocation?.cwd ?? subagent.workspacePath,
-                        branch: allocation?.branch ?? subagent.branch,
-                        ref: allocation?.ref ?? subagent.ref,
-                        initialPrompt: recoveryPrompt,
-                        metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
-                        now: tickStartedAt,
-                        thinkingLevel: node.thinkingLevel,
-                    };
-                    await runtime.saveGoalSubagent(withSubagentPatch(subagent, {
-                        status: "failed",
-                        integrationStatus: `auto-retry ${retryCount + 1}/${maxRetries}: ${errorMessage}`,
-                        retryCount: retryCount + 1,
-                    }));
-                    await runtime.saveGoalDagNode(withNodePatch(node, { status: "running", updatedAt: tickStartedAt }));
-                    const newSubagent = await runtime.startGoalSubagent(options.adapter, node, startOptions);
-                    result.started.push(newSubagent);
+            const state = await runtime.getGoalOrchestrationState(goalId);
+            try {
+                const recovered = await tryAutoRecoverFailedNode(runtime, options.adapter, node, subagent, state, result, options, tickStartedAt);
+                if (recovered)
                     continue;
-                }
-                catch (_retryError) {
-                    // Retry itself failed — fall through to permanent failure
-                }
             }
-            const failedNode = withNodePatch(node, { status: "failed", lastValidationSummary: errorMessage });
+            catch (_retryError) { /* fall through */ }
+            const failedNode = withNodePatch(node, { status: "failed", lastValidationSummary: subagent.integrationStatus ?? subagent.selfReportedResult });
             await runtime.saveGoalDagNode(failedNode);
             result.failed.push(failedNode);
             continue;
