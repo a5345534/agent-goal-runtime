@@ -73,6 +73,8 @@ export interface GoalControllerTickOptions {
   validator?: GoalControllerValidator;
   renderInitialPrompt?: (request: GoalControllerInitialPromptRequest) => string;
   maxStartsPerTick?: number;
+  /** Maximum auto-retry attempts for transient subagent failures (default 2). */
+  maxAutoRetries?: number;
   systemPrompt?: string;
   metadata?: Record<string, unknown>;
   now?: Date | string | (() => Date | string);
@@ -116,6 +118,43 @@ const NON_TERMINAL_SUBAGENT_STATUSES = new Set<GoalSubagentRecord["status"]>([
   "needsFollowup",
 ]);
 
+const MAX_AUTO_RETRIES_DEFAULT = 2;
+
+const TRANSIENT_ERROR_PATTERNS = [
+  /server_error/i,
+  /timeout/i,
+  /rate.?limit/i,
+  /too many requests/i,
+  /service unavailable/i,
+  /temporarily unavailable/i,
+  /internal server error/i,
+  /bad gateway/i,
+  /gateway timeout/i,
+  /connection reset/i,
+  /econnrefused/i,
+  /econnreset/i,
+  /etimedout/i,
+  /enotfound/i,
+  /eai_again/i,
+  /network error/i,
+  /An error occurred while processing your request/i,
+];
+
+function isTransientError(message: string): boolean {
+  return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+function buildRecoveryPrompt(node: GoalDagNode, errorMessage: string, retryCount: number, maxRetries: number): string {
+  return [
+    `[SYSTEM RECOVERY] Your previous attempt encountered a transient error after ${retryCount} retry(s):`,
+    `Error: ${errorMessage}`,
+    `This is likely a temporary server or network issue.`,
+    `Please resume your work on: "${node.objective}"`,
+    `Report with SUBAGENT_RESULT: <summary> when done, or SUBAGENT_BLOCKED: <reason> if blocked.`,
+    `Retry ${retryCount + 1}/${maxRetries}.`,
+  ].join("\n");
+}
+
 export async function runGoalControllerTick(
   runtime: GoalControllerRuntimePort,
   goalId: string,
@@ -137,7 +176,7 @@ export async function runGoalControllerTick(
   };
 
   const initialState = await runtime.getGoalOrchestrationState(goalId);
-  await syncSubagents(runtime, options.adapter, initialState, result);
+  await syncSubagents(runtime, options.adapter, initialState, result, options);
   await reconcileSubagentOutcomes(runtime, goalId, options, result, tickStartedAt);
   await startReadyNodes(runtime, goalId, options, result, tickStartedAt);
 
@@ -178,6 +217,7 @@ async function syncSubagents(
   adapter: HarnessSubagentAdapter,
   state: GoalOrchestrationState,
   result: GoalControllerTickResult,
+  options: GoalControllerTickOptions,
 ): Promise<void> {
   for (const subagent of state.subagents) {
     if (subagent.harnessAdapterId !== adapter.adapterId) continue;
@@ -187,17 +227,50 @@ async function syncSubagents(
       if (subagentChanged(subagent, updated)) result.synced.push(updated);
     } catch (error) {
       if (isTransientStoreLockError(error)) continue;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const node = state.nodes.find((item) => item.nodeId === subagent.nodeId);
+      const maxRetries = options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT;
+      const retryCount = subagent.retryCount ?? 0;
+
+      if (node && isTransientError(errorMessage) && retryCount < maxRetries) {
+        // Auto-retry: restart the subagent with a recovery prompt
+        try {
+          const recoveryPrompt = buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries);
+          const allocation = await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt: subagent.updatedAt });
+          const startOptions: StartGoalSubagentOptions = {
+            subagentId: allocation?.subagentId,
+            cwd: allocation?.cwd ?? subagent.workspacePath,
+            branch: allocation?.branch ?? subagent.branch,
+            ref: allocation?.ref ?? subagent.ref,
+            initialPrompt: allocation?.initialPrompt ?? recoveryPrompt,
+            metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+            now: subagent.updatedAt,
+            thinkingLevel: node.thinkingLevel,
+          };
+          await runtime.saveGoalDagNode(withNodePatch(node, { status: "running", updatedAt: toIso(resolveNow(options.now)) }));
+          await runtime.saveGoalSubagent(withSubagentPatch(subagent, {
+            status: "failed",
+            integrationStatus: `auto-retry ${retryCount + 1}/${maxRetries}: ${errorMessage}`,
+            retryCount: retryCount + 1,
+          }));
+          const newSubagent = await runtime.startGoalSubagent(adapter, node, startOptions);
+          result.started.push(newSubagent);
+          result.changed = true;
+          continue;
+        } catch (retryError) {
+          // Retry itself failed — fall through to permanent failure
+        }
+      }
+
       const failed = withSubagentPatch(subagent, {
         status: "failed",
-        integrationStatus: error instanceof Error ? error.message : String(error),
+        integrationStatus: errorMessage,
+        retryCount: subagent.retryCount,
       });
       await runtime.saveGoalSubagent(failed);
-      const node = state.nodes.find((item) => item.nodeId === subagent.nodeId);
-      if (node) {
-        const failedNode = withNodePatch(node, { status: "failed", lastValidationSummary: failed.integrationStatus });
-        await runtime.saveGoalDagNode(failedNode);
-        result.failed.push(failedNode);
-      }
+      const failedNode = withNodePatch(node ?? { nodeId: subagent.nodeId } as GoalDagNode, { status: "failed", lastValidationSummary: failed.integrationStatus });
+      await runtime.saveGoalDagNode(failedNode);
+      result.failed.push(failedNode);
       result.synced.push(failed);
     }
   }

@@ -344,6 +344,8 @@ export interface GoalSubagentRecord {
   controllerValidationResults?: string[];
   commitSha?: string;
   integrationStatus?: string;
+  /** Number of automatic retries attempted for this subagent. */
+  retryCount?: number;
   createdAt: string;
   updatedAt: string;
 }

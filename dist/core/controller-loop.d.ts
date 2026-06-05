@@ -63,6 +63,8 @@ export interface GoalControllerTickOptions {
     validator?: GoalControllerValidator;
     renderInitialPrompt?: (request: GoalControllerInitialPromptRequest) => string;
     maxStartsPerTick?: number;
+    /** Maximum auto-retry attempts for transient subagent failures (default 2). */
+    maxAutoRetries?: number;
     systemPrompt?: string;
     metadata?: Record<string, unknown>;
     now?: Date | string | (() => Date | string);

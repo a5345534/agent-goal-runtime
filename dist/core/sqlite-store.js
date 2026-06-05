@@ -189,8 +189,8 @@ export class SQLiteGoalStore {
           goal_id, node_id, subagent_id, harness_adapter_id, session_id,
           session_file, workspace_path, branch, ref, status, prompts_json,
           last_activity_at, self_reported_result, controller_validation_results_json,
-          commit_sha, integration_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          commit_sha, integration_status, retry_count, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, subagent_id) DO UPDATE SET
           node_id = excluded.node_id,
           harness_adapter_id = excluded.harness_adapter_id,
@@ -206,8 +206,9 @@ export class SQLiteGoalStore {
           controller_validation_results_json = excluded.controller_validation_results_json,
           commit_sha = excluded.commit_sha,
           integration_status = excluded.integration_status,
+          retry_count = excluded.retry_count,
           updated_at = excluded.updated_at`)
-            .run(subagent.goalId, subagent.nodeId, subagent.subagentId, subagent.harnessAdapterId, subagent.sessionId ?? null, subagent.sessionFile ?? null, subagent.workspacePath ?? null, subagent.branch ?? null, subagent.ref ?? null, subagent.status, JSON.stringify(subagent.prompts), subagent.lastActivityAt ?? null, subagent.selfReportedResult ?? null, subagent.controllerValidationResults === undefined ? null : JSON.stringify(subagent.controllerValidationResults), subagent.commitSha ?? null, subagent.integrationStatus ?? null, subagent.createdAt, subagent.updatedAt);
+            .run(subagent.goalId, subagent.nodeId, subagent.subagentId, subagent.harnessAdapterId, subagent.sessionId ?? null, subagent.sessionFile ?? null, subagent.workspacePath ?? null, subagent.branch ?? null, subagent.ref ?? null, subagent.status, JSON.stringify(subagent.prompts), subagent.lastActivityAt ?? null, subagent.selfReportedResult ?? null, subagent.controllerValidationResults === undefined ? null : JSON.stringify(subagent.controllerValidationResults), subagent.commitSha ?? null, subagent.integrationStatus ?? null, subagent.retryCount ?? null, subagent.createdAt, subagent.updatedAt);
     }
     async getGoalSubagent(goalId, subagentId) {
         const row = this.db
@@ -369,6 +370,7 @@ export class SQLiteGoalStore {
         controller_validation_results_json TEXT,
         commit_sha TEXT,
         integration_status TEXT,
+        retry_count INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (goal_id, subagent_id)
@@ -383,6 +385,7 @@ export class SQLiteGoalStore {
         addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_scenario", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_arg", "TEXT");
+        addColumnIfMissing(this.db, "goal_subagents", "retry_count", "INTEGER");
     }
 }
 function addColumnIfMissing(db, table, column, definition) {
@@ -530,6 +533,7 @@ function rowToSubagent(row) {
         controllerValidationResults: row.controller_validation_results_json ? parseStringArray(row.controller_validation_results_json) : undefined,
         commitSha: row.commit_sha ?? undefined,
         integrationStatus: row.integration_status ?? undefined,
+        retryCount: row.retry_count ?? undefined,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };

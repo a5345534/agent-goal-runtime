@@ -458,6 +458,7 @@ function buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting = rea
         maxTicks: 1,
         intervalMs: 0,
         schedulingPolicy: { maxConcurrentSubagents: readPiGoalMaxSubagents() },
+        maxAutoRetries: readPiGoalMaxAutoRetries(),
         workspaceAllocator: async (request) => {
             const allocation = (await allocator(request)) ?? {};
             const selection = selectPiSubagentModel(request.node, modelRouting, fallbackModelArg);
@@ -772,9 +773,17 @@ function formatGoalConfigValue(key) {
 function configEnvFor(key) {
     switch (key) {
         case "maxSubagents": return process.env.AGENT_GOAL_PI_MAX_SUBAGENTS;
+        case "maxAutoRetries": return process.env.AGENT_GOAL_PI_MAX_AUTO_RETRIES;
         case "controllerPollMs": return process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS;
         default: return undefined;
     }
+}
+function readPiGoalMaxAutoRetries() {
+    const raw = readPiGoalConfig().maxAutoRetries ?? process.env.AGENT_GOAL_PI_MAX_AUTO_RETRIES;
+    if (!raw)
+        return 2;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2;
 }
 function modelArgFromContext(ctx) {
     const model = ctx.model;
@@ -782,14 +791,14 @@ function modelArgFromContext(ctx) {
     const modelId = typeof model?.id === "string" ? model.id : typeof model?.modelId === "string" ? model.modelId : undefined;
     return provider && modelId ? `${provider}/${modelId}` : undefined;
 }
-const GOAL_CONFIG_KEYS = ["maxSubagents", "controllerPollMs"];
+const GOAL_CONFIG_KEYS = ["maxSubagents", "maxAutoRetries", "controllerPollMs"];
 async function handleGoalConfigCommand(ctx, args) {
     const key = args[0];
     const value = args[1];
     if (!key) {
         const lines = ["Goal runtime configuration (use /goal config <key> <value> to change):", ""];
         for (const k of GOAL_CONFIG_KEYS) {
-            const label = { maxSubagents: "max-subagents", controllerPollMs: "controller-poll-ms" }[k] ?? k;
+            const label = { maxSubagents: "max-subagents", maxAutoRetries: "max-auto-retries", controllerPollMs: "controller-poll-ms" }[k] ?? k;
             lines.push(`  ${label}: ${formatGoalConfigValue(k)}`);
         }
         lines.push("", `Config file: ${PI_GOAL_RUNTIME_CONFIG_PATH}`);
@@ -798,7 +807,7 @@ async function handleGoalConfigCommand(ctx, args) {
         ctx.ui.notify(lines.join("\n"), "info");
         return;
     }
-    const keyMap = { "max-subagents": "maxSubagents", "controller-poll-ms": "controllerPollMs" };
+    const keyMap = { "max-subagents": "maxSubagents", "max-auto-retries": "maxAutoRetries", "controller-poll-ms": "controllerPollMs" };
     const resolved = keyMap[key] ?? key;
     if (!GOAL_CONFIG_KEYS.includes(resolved)) {
         throw new Error(`Unknown config key "${key}". Available: ${GOAL_CONFIG_KEYS.map((k) => keyMap[k] ?? k).join(", ")}`);
@@ -818,6 +827,14 @@ async function handleGoalConfigCommand(ctx, args) {
             throw new Error(`max-subagents must be a positive integer, got "${value}"`);
         writePiGoalConfig({ maxSubagents: String(n) });
         ctx.ui.notify(`Goal config max-subagents set to ${n}.`, "info");
+        return;
+    }
+    if (resolved === "maxAutoRetries") {
+        const n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n) || n < 0)
+            throw new Error(`max-auto-retries must be a positive integer or 0, got "${value}"`);
+        writePiGoalConfig({ maxAutoRetries: String(n) });
+        ctx.ui.notify(`Goal config max-auto-retries set to ${n}.`, "info");
         return;
     }
     if (resolved === "controllerPollMs") {

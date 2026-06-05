@@ -137,6 +137,7 @@ interface SqliteSubagentRow {
   controller_validation_results_json: string | null;
   commit_sha: string | null;
   integration_status: string | null;
+  retry_count: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -426,8 +427,8 @@ export class SQLiteGoalStore implements GoalStore {
           goal_id, node_id, subagent_id, harness_adapter_id, session_id,
           session_file, workspace_path, branch, ref, status, prompts_json,
           last_activity_at, self_reported_result, controller_validation_results_json,
-          commit_sha, integration_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          commit_sha, integration_status, retry_count, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, subagent_id) DO UPDATE SET
           node_id = excluded.node_id,
           harness_adapter_id = excluded.harness_adapter_id,
@@ -443,6 +444,7 @@ export class SQLiteGoalStore implements GoalStore {
           controller_validation_results_json = excluded.controller_validation_results_json,
           commit_sha = excluded.commit_sha,
           integration_status = excluded.integration_status,
+          retry_count = excluded.retry_count,
           updated_at = excluded.updated_at`,
       )
       .run(
@@ -462,6 +464,7 @@ export class SQLiteGoalStore implements GoalStore {
         subagent.controllerValidationResults === undefined ? null : JSON.stringify(subagent.controllerValidationResults),
         subagent.commitSha ?? null,
         subagent.integrationStatus ?? null,
+        subagent.retryCount ?? null,
         subagent.createdAt,
         subagent.updatedAt,
       );
@@ -638,6 +641,7 @@ export class SQLiteGoalStore implements GoalStore {
         controller_validation_results_json TEXT,
         commit_sha TEXT,
         integration_status TEXT,
+        retry_count INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (goal_id, subagent_id)
@@ -652,6 +656,7 @@ export class SQLiteGoalStore implements GoalStore {
     addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
     addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_scenario", "TEXT");
     addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_arg", "TEXT");
+    addColumnIfMissing(this.db, "goal_subagents", "retry_count", "INTEGER");
   }
 }
 
@@ -807,6 +812,7 @@ function rowToSubagent(row: SqliteSubagentRow): GoalSubagentRecord {
     controllerValidationResults: row.controller_validation_results_json ? parseStringArray(row.controller_validation_results_json) : undefined,
     commitSha: row.commit_sha ?? undefined,
     integrationStatus: row.integration_status ?? undefined,
+    retryCount: row.retry_count ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
