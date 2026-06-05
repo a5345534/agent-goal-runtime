@@ -1,5 +1,5 @@
 import type { GoalDagNode, GoalSubagentRecord, GoalSubagentStatus } from "./types.js";
-export type HarnessSubagentSessionStatus = "starting" | "running" | "idle" | "selfReportedComplete" | "blocked" | "failed" | "stopped";
+export type HarnessSubagentSessionStatus = "starting" | "running" | "idle" | "needsFollowup" | "selfReportedComplete" | "blocked" | "failed" | "stopped";
 export interface HarnessSubagentStartRequest {
     goalId: string;
     node: GoalDagNode;

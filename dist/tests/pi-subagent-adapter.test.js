@@ -153,7 +153,7 @@ test("Pi subagent session inspection maps transcript markers to self-report stat
         rmSync(dir, { recursive: true, force: true });
     }
 });
-test("Pi subagent session inspection does not keep stale pre-compaction errors after later assistant success", () => {
+test("Pi subagent session inspection asks for follow-up when pre-compaction error is followed by terminal text without marker", () => {
     const state = readPiSubagentSessionState(subagent({ sessionFile: "/session" }), {
         exists: () => true,
         readFile: () => [
@@ -176,8 +176,9 @@ test("Pi subagent session inspection does not keep stale pre-compaction errors a
             }),
         ].join("\n"),
     });
-    assert.equal(state.status, "idle");
+    assert.equal(state.status, "needsFollowup");
     assert.equal(state.error, undefined);
+    assert.match(state.selfReportedResult ?? "", /Implemented files/);
     assert.equal(state.lastActivityAt, "2026-06-02T00:00:03.000Z");
 });
 test("Pi subagent session inspection maps blocked markers and missing sessions", () => {

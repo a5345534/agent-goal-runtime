@@ -4,6 +4,7 @@ export type HarnessSubagentSessionStatus =
   | "starting"
   | "running"
   | "idle"
+  | "needsFollowup"
   | "selfReportedComplete"
   | "blocked"
   | "failed"
@@ -193,6 +194,8 @@ export function mapHarnessStatusToSubagentStatus(status: HarnessSubagentSessionS
       return "running";
     case "idle":
       return "idle";
+    case "needsFollowup":
+      return "needsFollowup";
     case "selfReportedComplete":
       return "selfReportedComplete";
     case "blocked":

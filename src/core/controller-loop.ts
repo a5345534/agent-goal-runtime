@@ -193,6 +193,26 @@ function buildContextUpgradePrompt(node: GoalDagNode, oldModel: string, newModel
   ].join("\n");
 }
 
+const OUTCOME_MARKER_FOLLOWUP_TAG = "[SYSTEM FOLLOW-UP: EXPLICIT_OUTCOME_MARKER]";
+
+function buildExplicitOutcomeMarkerPrompt(node: GoalDagNode, subagent: GoalSubagentRecord): string {
+  const previous = subagent.selfReportedResult ? `\n\nPrevious assistant outcome text (untrusted transcript evidence):\n${truncateForPrompt(subagent.selfReportedResult, 4000)}` : "";
+  return [
+    OUTCOME_MARKER_FOLLOWUP_TAG,
+    `Your latest assistant message for node "${node.nodeId}" looked like an outcome report but did not include the required marker.`,
+    `Do not redo completed work unless you discover it is necessary. Inspect current workspace state only if needed to make an accurate report.`,
+    `If the node is done, reply with exactly this marker on its own line followed by a concise summary:`,
+    `SUBAGENT_RESULT: <summary of changes, verification, and remaining risks>`,
+    `If the node is blocked, reply with exactly this marker instead:`,
+    `SUBAGENT_BLOCKED: <specific blocker and what input/state change is needed>`,
+    previous,
+  ].join("\n");
+}
+
+function truncateForPrompt(value: string, maxChars: number): string {
+  return value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n...[truncated ${value.length - maxChars} chars]`;
+}
+
 async function tryAutoRecoverFailedNode(
   runtime: GoalControllerRuntimePort,
   adapter: HarnessSubagentAdapter,
@@ -397,6 +417,20 @@ async function reconcileSubagentOutcomes(
       const failedNode = withNodePatch(node, { status: "failed", lastValidationSummary: subagent.integrationStatus ?? subagent.selfReportedResult });
       await runtime.saveGoalDagNode(failedNode);
       result.failed.push(failedNode);
+      continue;
+    }
+
+    if (subagent.status === "needsFollowup") {
+      const followupPrompt = buildExplicitOutcomeMarkerPrompt(node, subagent);
+      const followed = await runtime.sendGoalSubagentPrompt(options.adapter, subagent, followupPrompt, {
+        metadata: options.metadata,
+        now: tickStartedAt,
+      });
+      const runningSubagent = withSubagentPatch(followed, { status: "running", integrationStatus: undefined });
+      const runningNode = withNodePatch(node, { status: "running", lastValidationSummary: "Requested explicit SUBAGENT_RESULT/SUBAGENT_BLOCKED marker from subagent." });
+      await runtime.saveGoalSubagent(runningSubagent);
+      await runtime.saveGoalDagNode(runningNode);
+      result.followups.push(runningSubagent);
       continue;
     }
 

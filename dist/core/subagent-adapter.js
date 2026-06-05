@@ -65,6 +65,8 @@ export function mapHarnessStatusToSubagentStatus(status) {
             return "running";
         case "idle":
             return "idle";
+        case "needsFollowup":
+            return "needsFollowup";
         case "selfReportedComplete":
             return "selfReportedComplete";
         case "blocked":

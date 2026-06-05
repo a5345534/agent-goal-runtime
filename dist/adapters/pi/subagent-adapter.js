@@ -131,6 +131,10 @@ export function readPiSubagentSessionState(subagent, options = {}) {
     if (parsed.lastError) {
         return withInspectionMetadata({ status: "failed", error: parsed.lastError, lastActivityAt: parsed.lastActivityAt }, parsed);
     }
+    const terminalish = parsed.lastMessageRole === "assistant" ? terminalishAssistantTextWithoutMarker(parsed.lastAssistantText) : undefined;
+    if (terminalish) {
+        return withInspectionMetadata({ status: "needsFollowup", selfReportedResult: terminalish, lastActivityAt: parsed.lastActivityAt }, parsed);
+    }
     const status = parsed.lastMessageRole === "assistant" ? "idle" : options.live ? "running" : "idle";
     return withInspectionMetadata({ status, lastActivityAt: parsed.lastActivityAt }, parsed);
 }
@@ -209,6 +213,16 @@ function extractBlockedMarker(text) {
     if (explicit)
         return explicit;
     return STATUS_BLOCKED_MARKER.test(text ?? "") ? "Subagent reported blocked" : undefined;
+}
+function terminalishAssistantTextWithoutMarker(text) {
+    const cleaned = cleanupMarkerText(text);
+    if (!cleaned)
+        return undefined;
+    if (RESULT_MARKER.test(cleaned) || BLOCKED_MARKER.test(cleaned) || STATUS_BLOCKED_MARKER.test(cleaned))
+        return undefined;
+    const successLike = /(\bdone\b|\bcompleted\b|\bfinished\b|\bimplemented\b|verification passed|validation passed|tests? passed|已完成|完成到目前|驗證.*通過|測試.*通過|已處理)/i.test(cleaned);
+    const blockedLike = /(\bblocked\b|cannot complete|can't complete|unable to complete|無法完成|阻塞|卡住)/i.test(cleaned);
+    return successLike || blockedLike ? cleaned : undefined;
 }
 function cleanupMarkerText(value) {
     const trimmed = value?.trim();
