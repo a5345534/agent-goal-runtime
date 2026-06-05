@@ -297,7 +297,40 @@ async function reconcileSubagentOutcomes(
     }
 
     if (subagent.status === "failed") {
-      const failedNode = withNodePatch(node, { status: "failed", lastValidationSummary: subagent.integrationStatus ?? subagent.selfReportedResult });
+      const errorMessage = subagent.integrationStatus ?? subagent.selfReportedResult ?? "unknown error";
+      const maxRetries = options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT;
+      const retryCount = subagent.retryCount ?? 0;
+
+      if (isTransientError(errorMessage) && retryCount < maxRetries) {
+        // Auto-retry: restart with recovery prompt
+        try {
+          const recoveryPrompt = buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries);
+          const allocation = await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: subagent.harnessAdapterId, tickStartedAt });
+          const startOptions: StartGoalSubagentOptions = {
+            subagentId: allocation?.subagentId,
+            cwd: allocation?.cwd ?? subagent.workspacePath,
+            branch: allocation?.branch ?? subagent.branch,
+            ref: allocation?.ref ?? subagent.ref,
+            initialPrompt: recoveryPrompt,
+            metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+            now: tickStartedAt,
+            thinkingLevel: node.thinkingLevel,
+          };
+          await runtime.saveGoalSubagent(withSubagentPatch(subagent, {
+            status: "failed",
+            integrationStatus: `auto-retry ${retryCount + 1}/${maxRetries}: ${errorMessage}`,
+            retryCount: retryCount + 1,
+          }));
+          await runtime.saveGoalDagNode(withNodePatch(node, { status: "running", updatedAt: tickStartedAt }));
+          const newSubagent = await runtime.startGoalSubagent(options.adapter, node, startOptions);
+          result.started.push(newSubagent);
+          continue;
+        } catch (_retryError) {
+          // Retry itself failed — fall through to permanent failure
+        }
+      }
+
+      const failedNode = withNodePatch(node, { status: "failed", lastValidationSummary: errorMessage });
       await runtime.saveGoalDagNode(failedNode);
       result.failed.push(failedNode);
       continue;
