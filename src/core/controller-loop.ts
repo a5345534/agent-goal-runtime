@@ -137,6 +137,7 @@ const TRANSIENT_ERROR_PATTERNS = [
   /enotfound/i,
   /eai_again/i,
   /network error/i,
+  /websocket/i,
   /An error occurred while processing your request/i,
 ];
 

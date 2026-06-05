@@ -123,6 +123,18 @@ test("controller asks idle subagents with terminal text but missing outcome mark
     assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
     assert.equal((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.status, "running");
 });
+test("controller auto-retries existing failed subagents with WebSocket transport errors", async () => {
+    const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
+    await runtime.saveGoalDagNode({ ...await runtime.getGoalDagNode("goal-1", "build"), status: "failed", updatedAt: now, lastValidationSummary: "WebSocket error" });
+    await runtime.saveGoalSubagent(subagent({ status: "failed", integrationStatus: "WebSocket error", workspacePath: "/repo/.worktrees/build" }));
+    const adapter = new FakeSubagentAdapter();
+    const tick = await runtime.runGoalControllerTick("goal-1", { adapter, maxAutoRetries: 2 });
+    assert.equal(tick.started.length, 1);
+    assert.equal(adapter.starts.length, 1);
+    assert.equal(adapter.starts[0]?.cwd, "/repo/.worktrees/build");
+    assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
+    assert.equal((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.retryCount, 1);
+});
 test("controller tick treats transient database locks as retryable sync skips", async () => {
     const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
     await runtime.saveGoalDagNode({ ...await runtime.getGoalDagNode("goal-1", "build"), status: "running", updatedAt: now });
