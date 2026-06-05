@@ -201,8 +201,11 @@ function parsePiSessionFile(content: string): ParsedPiSessionState {
     const message = entry.message as Record<string, unknown> | undefined;
     if (!message) continue;
     if (typeof message.role === "string") parsed.lastMessageRole = message.role;
-    if (typeof message.errorMessage === "string") parsed.lastError = message.errorMessage;
-    if (message.role === "assistant") parsed.lastAssistantText = textFromContent(message.content) || parsed.lastAssistantText;
+    if (message.role === "assistant") {
+      if (message.stopReason === "error" && typeof message.errorMessage === "string") parsed.lastError = message.errorMessage;
+      else parsed.lastError = undefined;
+      parsed.lastAssistantText = textFromContent(message.content) || parsed.lastAssistantText;
+    }
   }
   return parsed;
 }

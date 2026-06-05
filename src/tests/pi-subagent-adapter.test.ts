@@ -176,6 +176,35 @@ test("Pi subagent session inspection maps transcript markers to self-report stat
   }
 });
 
+test("Pi subagent session inspection does not keep stale pre-compaction errors after later assistant success", () => {
+  const state = readPiSubagentSessionState(subagent({ sessionFile: "/session" }), {
+    exists: () => true,
+    readFile: () => [
+      JSON.stringify({ type: "message", message: { role: "user", content: "start" }, timestamp: now }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "Codex error: context_length_exceeded: Your input exceeds the context window of this model.",
+          content: [],
+        },
+        timestamp: "2026-06-02T00:00:01.000Z",
+      }),
+      JSON.stringify({ type: "compaction", summary: "compacted", firstKeptEntryId: "u1", tokensBefore: 126835, timestamp: "2026-06-02T00:00:02.000Z" }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Implemented files and verification passed, but missing explicit marker." }] },
+        timestamp: "2026-06-02T00:00:03.000Z",
+      }),
+    ].join("\n"),
+  });
+
+  assert.equal(state.status, "idle");
+  assert.equal(state.error, undefined);
+  assert.equal(state.lastActivityAt, "2026-06-02T00:00:03.000Z");
+});
+
 test("Pi subagent session inspection maps blocked markers and missing sessions", () => {
   const blocked = readPiSubagentSessionState(subagent({ sessionFile: "/blocked" }), {
     exists: () => true,

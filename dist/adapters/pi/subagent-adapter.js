@@ -158,10 +158,13 @@ function parsePiSessionFile(content) {
             continue;
         if (typeof message.role === "string")
             parsed.lastMessageRole = message.role;
-        if (typeof message.errorMessage === "string")
-            parsed.lastError = message.errorMessage;
-        if (message.role === "assistant")
+        if (message.role === "assistant") {
+            if (message.stopReason === "error" && typeof message.errorMessage === "string")
+                parsed.lastError = message.errorMessage;
+            else
+                parsed.lastError = undefined;
             parsed.lastAssistantText = textFromContent(message.content) || parsed.lastAssistantText;
+        }
     }
     return parsed;
 }
