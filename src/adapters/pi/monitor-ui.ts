@@ -23,19 +23,40 @@ export interface GoalMonitorDagSnapshot {
   refreshedAt?: string;
 }
 
-const DEFAULT_VISIBLE_TRANSCRIPT_LINES = 18;
-const DEFAULT_VISIBLE_DAG_LINES = 18;
+const DEFAULT_VISIBLE_LIVE_LINES = 18;
+const DEFAULT_VISIBLE_LIST_LINES = 14;
 
-type GoalMonitorPane = "dag" | "transcript";
+type GoalMonitorPane = "live" | "list";
+type GoalMonitorScope =
+  | { kind: "goal" }
+  | { kind: "node"; nodeId: string }
+  | { kind: "runner"; nodeId: string; subagentId: string };
+type GoalMonitorListItem =
+  | { kind: "node"; nodeId: string }
+  | { kind: "runner"; nodeId: string; subagentId: string };
+
+interface GoalMonitorViewModel {
+  scopeLabel: string;
+  liveTitle: string;
+  liveLines: string[];
+  liveDiagnostic?: string;
+  liveFollowsTail: boolean;
+  listTitle: string;
+  listRows: string[];
+  listItems: GoalMonitorListItem[];
+}
 
 export class GoalMonitorController {
   private buttonIndex = 0;
-  private activePane: GoalMonitorPane = "dag";
-  private dagScroll = 0;
-  private transcriptScroll = 0;
-  private followTail = true;
-  private lastDagLineCount = 0;
-  private lastTranscriptLineCount = 0;
+  private activePane: GoalMonitorPane = "list";
+  private scope: GoalMonitorScope = { kind: "goal" };
+  private listIndex = 0;
+  private listScroll = 0;
+  private liveScroll = 0;
+  private followLiveTail = true;
+  private lastLiveLineCount = 0;
+  private lastListLineCount = 0;
+  private lastListItems: GoalMonitorListItem[] = [];
 
   constructor(
     private readonly goal: GoalSummary,
@@ -60,43 +81,55 @@ export class GoalMonitorController {
       this.buttonIndex = (this.buttonIndex + this.actions.length - 1) % this.actions.length;
       return undefined;
     }
-    if (matchesKey(data, Key.right) || matchesKey(data, Key.tab)) {
+    if (matchesKey(data, Key.right)) {
       this.buttonIndex = (this.buttonIndex + 1) % this.actions.length;
       return undefined;
     }
-    if (data === "d" || data === "D") {
-      this.activePane = "dag";
+    if (matchesKey(data, Key.tab)) {
+      this.activePane = this.activePane === "live" ? "list" : "live";
       return undefined;
     }
-    if (data === "t" || data === "T") {
-      this.activePane = "transcript";
+    if (data === "l" || data === "L" || data === "d" || data === "D") {
+      this.activePane = "list";
+      return undefined;
+    }
+    if (data === "v" || data === "V" || data === "t" || data === "T") {
+      this.activePane = "live";
+      return undefined;
+    }
+    if (data === "b" || data === "B" || matchesKey(data, Key.backspace)) {
+      this.goBack();
       return undefined;
     }
     if (matchesKey(data, Key.up)) {
-      this.scrollActivePane(-1);
+      this.moveActivePane(-1);
       return undefined;
     }
     if (matchesKey(data, Key.down)) {
-      this.scrollActivePane(1);
+      this.moveActivePane(1);
       return undefined;
     }
     if (matchesKey(data, Key.pageUp)) {
-      this.scrollActivePane(-this.activePageSize());
+      this.moveActivePane(-this.activePageSize());
       return undefined;
     }
     if (matchesKey(data, Key.pageDown)) {
-      this.scrollActivePane(this.activePageSize());
+      this.moveActivePane(this.activePageSize());
       return undefined;
     }
     if (matchesKey(data, Key.home)) {
-      this.scrollActivePaneToTop();
+      this.moveActivePaneToTop();
       return undefined;
     }
     if (matchesKey(data, Key.end)) {
-      this.scrollActivePaneToEnd();
+      this.moveActivePaneToEnd();
       return undefined;
     }
     if (matchesKey(data, Key.enter)) {
+      if (this.activePane === "list" && this.lastListItems.length > 0) {
+        this.drillInto(this.lastListItems[Math.min(this.listIndex, this.lastListItems.length - 1)]!);
+        return undefined;
+      }
       const action = this.actions[this.buttonIndex] ?? "close";
       return action === "close" ? { kind: "close" } : { kind: "action", action };
     }
@@ -104,35 +137,69 @@ export class GoalMonitorController {
   }
 
   private activePageSize(): number {
-    const visibleCount = this.activePane === "dag" ? DEFAULT_VISIBLE_DAG_LINES : DEFAULT_VISIBLE_TRANSCRIPT_LINES;
+    const visibleCount = this.activePane === "list" ? DEFAULT_VISIBLE_LIST_LINES : DEFAULT_VISIBLE_LIVE_LINES;
     return Math.max(1, visibleCount - 1);
   }
 
-  private scrollActivePane(delta: number): void {
-    if (this.activePane === "dag") {
-      this.dagScroll = Math.max(0, this.dagScroll + delta);
+  private moveActivePane(delta: number): void {
+    if (this.activePane === "list") {
+      this.moveListSelection(delta);
       return;
     }
-    this.followTail = false;
-    this.transcriptScroll = Math.max(0, this.transcriptScroll + delta);
+    this.followLiveTail = false;
+    this.liveScroll = Math.max(0, this.liveScroll + delta);
   }
 
-  private scrollActivePaneToTop(): void {
-    if (this.activePane === "dag") {
-      this.dagScroll = 0;
+  private moveActivePaneToTop(): void {
+    if (this.activePane === "list") {
+      this.listIndex = 0;
+      this.listScroll = 0;
       return;
     }
-    this.followTail = false;
-    this.transcriptScroll = 0;
+    this.followLiveTail = false;
+    this.liveScroll = 0;
   }
 
-  private scrollActivePaneToEnd(): void {
-    if (this.activePane === "dag") {
-      this.dagScroll = Math.max(0, this.lastDagLineCount - DEFAULT_VISIBLE_DAG_LINES);
+  private moveActivePaneToEnd(): void {
+    if (this.activePane === "list") {
+      this.listIndex = Math.max(0, this.lastListLineCount - 1);
+      this.listScroll = Math.max(0, this.lastListLineCount - DEFAULT_VISIBLE_LIST_LINES);
       return;
     }
-    this.followTail = true;
-    this.transcriptScroll = Math.max(0, this.lastTranscriptLineCount - DEFAULT_VISIBLE_TRANSCRIPT_LINES);
+    this.followLiveTail = true;
+    this.liveScroll = Math.max(0, this.lastLiveLineCount - DEFAULT_VISIBLE_LIVE_LINES);
+  }
+
+  private moveListSelection(delta: number): void {
+    if (this.lastListLineCount <= 0) return;
+    this.listIndex = Math.min(Math.max(0, this.listIndex + delta), this.lastListLineCount - 1);
+    this.keepSelectedListRowVisible();
+  }
+
+  private keepSelectedListRowVisible(): void {
+    if (this.listIndex < this.listScroll) this.listScroll = this.listIndex;
+    if (this.listIndex >= this.listScroll + DEFAULT_VISIBLE_LIST_LINES) this.listScroll = this.listIndex - DEFAULT_VISIBLE_LIST_LINES + 1;
+  }
+
+  private drillInto(item: GoalMonitorListItem): void {
+    this.scope = item.kind === "node"
+      ? { kind: "node", nodeId: item.nodeId }
+      : { kind: "runner", nodeId: item.nodeId, subagentId: item.subagentId };
+    this.activePane = "list";
+    this.listIndex = 0;
+    this.listScroll = 0;
+    this.liveScroll = 0;
+    this.followLiveTail = true;
+  }
+
+  private goBack(): void {
+    if (this.scope.kind === "goal") return;
+    this.scope = this.scope.kind === "runner" ? { kind: "node", nodeId: this.scope.nodeId } : { kind: "goal" };
+    this.activePane = "list";
+    this.listIndex = 0;
+    this.listScroll = 0;
+    this.liveScroll = 0;
+    this.followLiveTail = true;
   }
 
   render(width: number, theme: GoalListThemeLike): string[] {
@@ -140,49 +207,125 @@ export class GoalMonitorController {
     const actions = this.actions
       .map((action, index) => (index === this.buttonIndex ? theme.fg("accent", `[${action}]`) : theme.fg("dim", ` ${action} `)))
       .join(" ");
-    const snapshot = this.readTranscript();
+    const controllerTranscript = this.readTranscript();
     const dag = this.readDagSnapshot();
-    const transcriptLines = snapshot.lines;
-    const dagLines = renderDagLines(dag, this.now());
-    const visibleTranscriptCount = DEFAULT_VISIBLE_TRANSCRIPT_LINES;
-    const visibleDagCount = DEFAULT_VISIBLE_DAG_LINES;
-    this.lastDagLineCount = dagLines.length;
-    this.lastTranscriptLineCount = transcriptLines.length;
-    this.dagScroll = clampScroll(this.dagScroll, dagLines.length, visibleDagCount);
-    if (this.followTail) this.transcriptScroll = Math.max(0, transcriptLines.length - visibleTranscriptCount);
-    else this.transcriptScroll = clampScroll(this.transcriptScroll, transcriptLines.length, visibleTranscriptCount);
+    const view = this.buildView(dag, controllerTranscript);
+    const visibleLiveCount = DEFAULT_VISIBLE_LIVE_LINES;
+    const visibleListCount = DEFAULT_VISIBLE_LIST_LINES;
+
+    this.lastListItems = view.listItems;
+    this.lastListLineCount = view.listRows.length;
+    this.lastLiveLineCount = view.liveLines.length;
+    this.listIndex = Math.min(Math.max(0, this.listIndex), Math.max(0, view.listRows.length - 1));
+    this.keepSelectedListRowVisible();
+    this.listScroll = clampScroll(this.listScroll, view.listRows.length, visibleListCount);
+    if (view.liveFollowsTail && this.followLiveTail) this.liveScroll = Math.max(0, view.liveLines.length - visibleLiveCount);
+    else this.liveScroll = clampScroll(this.liveScroll, view.liveLines.length, visibleLiveCount);
 
     const lines = [
       truncateToWidth(`${theme.fg("accent", title)}  ${actions}`, width),
-      truncateToWidth(`status=${derivedMonitorStatus(this.goal, dag)} tokens=${formatMonitorTokens(this.goal)} elapsed=${formatElapsedSeconds(this.goal.timeUsedSeconds)} controllerModel=${formatMonitorModel(this.goal.controllerModelScenario, this.goal.controllerModelArg)}`, width),
+      truncateToWidth(`scope=${view.scopeLabel} focus=${this.activePane} status=${derivedMonitorStatus(this.goal, dag)} tokens=${formatMonitorTokens(this.goal)} elapsed=${formatElapsedSeconds(this.goal.timeUsedSeconds)} controllerModel=${formatMonitorModel(this.goal.controllerModelScenario, this.goal.controllerModelArg)}`, width),
       truncateToWidth(`workspace=${shortenPath(this.goal.executionWorkspace ?? "legacy")} branch=${shortenMiddle(this.goal.branch ?? this.goal.ref ?? "-", 72)}`, width),
       truncateToWidth(`DAG nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} subagents=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))} refreshed=${compactTimestamp(dag.refreshedAt ?? new Date(0).toISOString())}`, width),
-      truncateToWidth(theme.fg("dim", `live dashboard • pane=${this.activePane} • d/t focus • ↑↓ scroll • PgUp/PgDn page • Home top • End bottom/live • ←→/Tab action • Enter action • Esc close`), width),
+      truncateToWidth(theme.fg("dim", `live/list monitor • Enter drill list item • b/Backspace back • l/v focus • Tab switch • ↑↓ move/scroll • PgUp/PgDn • ←→ action • Esc close`), width),
       truncateToWidth(theme.fg("borderMuted", "─".repeat(Math.max(0, width))), width),
-      truncateToWidth(theme.fg(this.activePane === "dag" ? "accent" : "muted", `${this.activePane === "dag" ? "▶ " : "  "}DAG / Subagents`), width),
+      truncateToWidth(theme.fg(this.activePane === "live" ? "accent" : "muted", `${this.activePane === "live" ? "▶ " : "  "}LIVE: ${view.liveTitle}`), width),
     ];
 
-    if (dagLines.length === 0) lines.push(truncateToWidth(theme.fg("muted", "No DAG nodes recorded yet"), width));
-    const dagStart = this.dagScroll;
-    const dagEnd = Math.min(dagLines.length, dagStart + visibleDagCount);
-    for (const line of dagLines.slice(dagStart, dagEnd)) lines.push(truncateToWidth(line, width));
-    if (dagLines.length > 0) lines.push(truncateToWidth(theme.fg("dim", formatDagRange(dagStart, dagEnd, dagLines.length, this.activePane === "dag")), width));
+    if (view.liveDiagnostic) lines.push(truncateToWidth(theme.fg("warning", view.liveDiagnostic), width));
+    if (view.liveLines.length === 0) lines.push(truncateToWidth(theme.fg("muted", "No live entries available"), width));
+    const liveStart = this.liveScroll;
+    const liveEnd = Math.min(view.liveLines.length, liveStart + visibleLiveCount);
+    for (const line of view.liveLines.slice(liveStart, liveEnd)) lines.push(truncateToWidth(line, width));
+    if (view.liveLines.length > 0) lines.push(truncateToWidth(theme.fg("dim", formatLiveRange(liveStart, liveEnd, view.liveLines.length, this.activePane === "live", view.liveFollowsTail && this.followLiveTail)), width));
 
     lines.push(truncateToWidth(theme.fg("borderMuted", "─".repeat(Math.max(0, width))), width));
-    lines.push(truncateToWidth(theme.fg(this.activePane === "transcript" ? "accent" : "muted", `${this.activePane === "transcript" ? "▶ " : "  "}Transcript tail (${snapshot.entryCount} entries / ${snapshot.messageCount} messages)`), width));
-    if (snapshot.diagnostic) lines.push(truncateToWidth(theme.fg("warning", snapshot.diagnostic), width));
-    if (transcriptLines.length === 0) {
-      lines.push(truncateToWidth(theme.fg("muted", "No transcript entries available"), width));
+    lines.push(truncateToWidth(theme.fg(this.activePane === "list" ? "accent" : "muted", `${this.activePane === "list" ? "▶ " : "  "}LIST: ${view.listTitle}`), width));
+    if (view.listRows.length === 0) {
+      lines.push(truncateToWidth(theme.fg("muted", "No selectable rows for this scope"), width));
       return lines;
     }
-
-    const transcriptStart = this.transcriptScroll;
-    const transcriptEnd = Math.min(transcriptLines.length, transcriptStart + visibleTranscriptCount);
-    for (const line of transcriptLines.slice(transcriptStart, transcriptEnd)) {
-      lines.push(truncateToWidth(line, width));
+    const listStart = this.listScroll;
+    const listEnd = Math.min(view.listRows.length, listStart + visibleListCount);
+    for (let index = listStart; index < listEnd; index += 1) {
+      const row = view.listRows[index] ?? "";
+      const selected = index === this.listIndex;
+      lines.push(truncateToWidth(selected ? theme.fg("accent", `> ${row}`) : `  ${row}`, width));
     }
-    lines.push(truncateToWidth(theme.fg("dim", formatTranscriptRange(transcriptStart, transcriptEnd, transcriptLines.length, this.activePane === "transcript", this.followTail)), width));
+    lines.push(truncateToWidth(theme.fg("dim", formatListRange(listStart, listEnd, view.listRows.length, this.listIndex, this.activePane === "list")), width));
     return lines;
+  }
+
+  private buildView(dag: GoalMonitorDagSnapshot, controllerTranscript: GoalTranscriptSnapshot): GoalMonitorViewModel {
+    const now = this.now();
+    const nodesById = new Map(dag.nodes.map((node) => [node.nodeId, node]));
+    const subagentsByNode = groupSubagentsByNode(dag.subagents);
+    let scope = this.scope;
+    if (scope.kind !== "goal" && !nodesById.has(scope.nodeId)) scope = { kind: "goal" };
+    if (scope.kind === "runner") {
+      const subagentId = scope.subagentId;
+      if (!dag.subagents.some((subagent) => subagent.subagentId === subagentId)) {
+        scope = { kind: "node", nodeId: scope.nodeId };
+      }
+    }
+    this.scope = scope;
+
+    if (scope.kind === "goal") {
+      return {
+        scopeLabel: "goal",
+        liveTitle: `Controller execution (${controllerTranscript.entryCount} entries / ${controllerTranscript.messageCount} messages)`,
+        liveLines: controllerTranscript.lines,
+        liveDiagnostic: controllerTranscript.diagnostic,
+        liveFollowsTail: true,
+        listTitle: `Nodes ${dag.nodes.length ? `${Math.min(this.listIndex + 1, dag.nodes.length)}/${dag.nodes.length}` : "0"}`,
+        listRows: dag.nodes.map((node, index) => renderNodeListRow(node, subagentsByNode.get(node.nodeId) ?? [], index, now)),
+        listItems: dag.nodes.map((node) => ({ kind: "node", nodeId: node.nodeId })),
+      };
+    }
+
+    const node = nodesById.get(scope.nodeId)!;
+    const nodeSubagents = subagentsByNode.get(node.nodeId) ?? [];
+    if (scope.kind === "node") {
+      const latest = latestSubagent(nodeSubagents);
+      const transcript = readGoalTranscript(latest?.sessionFile);
+      return {
+        scopeLabel: `node/${shortenMiddle(node.slug || node.nodeId, 40)}`,
+        liveTitle: `Node ${node.nodeId}${latest ? ` • latest ${latest.subagentId}` : ""}`,
+        liveLines: renderNodeLiveLines(node, nodeSubagents, transcript, now),
+        liveDiagnostic: transcript.diagnostic,
+        liveFollowsTail: Boolean(latest?.sessionFile),
+        listTitle: `Runners for ${shortenMiddle(node.slug || node.nodeId, 48)} ${nodeSubagents.length ? `${Math.min(this.listIndex + 1, nodeSubagents.length)}/${nodeSubagents.length}` : "0"}`,
+        listRows: nodeSubagents.map((subagent, index) => renderRunnerListRow(subagent, index, now)),
+        listItems: nodeSubagents.map((subagent) => ({ kind: "runner", nodeId: node.nodeId, subagentId: subagent.subagentId })),
+      };
+    }
+
+    const runner = dag.subagents.find((subagent) => subagent.subagentId === scope.subagentId) ?? nodeSubagents[0];
+    if (!runner) {
+      return {
+        scopeLabel: `node/${shortenMiddle(node.slug || node.nodeId, 40)}`,
+        liveTitle: `Node ${node.nodeId}`,
+        liveLines: renderNodeLiveLines(node, nodeSubagents, { lines: [], entryCount: 0, messageCount: 0, diagnostic: "No runner selected" }, now),
+        liveDiagnostic: "No runner selected",
+        liveFollowsTail: false,
+        listTitle: `Runners for ${shortenMiddle(node.slug || node.nodeId, 48)} 0`,
+        listRows: [],
+        listItems: [],
+      };
+    }
+    const selectedIndex = Math.max(0, nodeSubagents.findIndex((subagent) => subagent.subagentId === runner.subagentId));
+    if (this.listIndex === 0 || this.listIndex >= nodeSubagents.length) this.listIndex = selectedIndex;
+    const transcript = readGoalTranscript(runner.sessionFile);
+    return {
+      scopeLabel: `runner/${shortenMiddle(runner.subagentId, 42)}`,
+      liveTitle: `Runner ${runner.subagentId}`,
+      liveLines: renderRunnerLiveLines(node, runner, transcript, now),
+      liveDiagnostic: transcript.diagnostic,
+      liveFollowsTail: Boolean(runner.sessionFile),
+      listTitle: `Sibling runners for ${shortenMiddle(node.slug || node.nodeId, 48)} ${nodeSubagents.length ? `${Math.min(this.listIndex + 1, nodeSubagents.length)}/${nodeSubagents.length}` : "0"}`,
+      listRows: nodeSubagents.map((subagent, index) => renderRunnerListRow(subagent, index, now)),
+      listItems: nodeSubagents.map((subagent) => ({ kind: "runner", nodeId: node.nodeId, subagentId: subagent.subagentId })),
+    };
   }
 }
 
@@ -190,57 +333,83 @@ function clampScroll(scroll: number, totalLines: number, visibleLines: number): 
   return Math.min(Math.max(0, scroll), Math.max(0, totalLines - visibleLines));
 }
 
-function formatDagRange(start: number, end: number, total: number, active: boolean): string {
-  const details = [
-    active ? "active" : undefined,
-    start > 0 ? `${start} previous DAG lines` : undefined,
-    total > end ? `${total - end} more DAG lines` : undefined,
-  ].filter(Boolean);
-  return `DAG lines: ${start + 1}-${end}/${total}${details.length ? ` • ${details.join(" • ")}` : ""}`;
+function formatLiveRange(start: number, end: number, total: number, active: boolean, followTail: boolean): string {
+  const details = [active ? "active" : undefined, followTail ? "live" : undefined, start > 0 ? `${start} previous live lines` : undefined, total > end ? `${total - end} more live lines` : undefined].filter(Boolean);
+  return `Live lines: ${start + 1}-${end}/${total}${details.length ? ` • ${details.join(" • ")}` : ""}`;
 }
 
-function formatTranscriptRange(start: number, end: number, total: number, active: boolean, followTail: boolean): string {
-  const details = [active ? "active" : undefined, followTail ? "live" : undefined].filter(Boolean);
-  return `${start + 1}-${end}/${total}${details.length ? ` ${details.join(" • ")}` : ""}`;
+function formatListRange(start: number, end: number, total: number, selected: number, active: boolean): string {
+  const details = [active ? "active" : undefined, start > 0 ? `${start} previous rows` : undefined, total > end ? `${total - end} more rows` : undefined].filter(Boolean);
+  return `Rows: ${start + 1}-${end}/${total} selected=${Math.min(selected + 1, total)}${details.length ? ` • ${details.join(" • ")}` : ""}`;
 }
 
-function renderDagLines(snapshot: GoalMonitorDagSnapshot, now: Date): string[] {
-  if (snapshot.nodes.length === 0 && snapshot.subagents.length === 0) return [];
-  const subagentsByNode = new Map<string, GoalSubagentRecord[]>();
-  for (const subagent of snapshot.subagents) {
-    const list = subagentsByNode.get(subagent.nodeId) ?? [];
+function groupSubagentsByNode(subagents: GoalSubagentRecord[]): Map<string, GoalSubagentRecord[]> {
+  const grouped = new Map<string, GoalSubagentRecord[]>();
+  for (const subagent of subagents) {
+    const list = grouped.get(subagent.nodeId) ?? [];
     list.push(subagent);
-    subagentsByNode.set(subagent.nodeId, list);
+    grouped.set(subagent.nodeId, list);
   }
+  for (const list of grouped.values()) {
+    list.sort((left, right) => compareIso(left.createdAt, right.createdAt) || left.subagentId.localeCompare(right.subagentId));
+  }
+  return grouped;
+}
 
-  const lines: string[] = [];
-  for (const [index, node] of snapshot.nodes.entries()) {
-    const nodeRuntime = formatRuntime(node.createdAt, now);
-    const nodeActivity = formatAgo(node.updatedAt, now);
-    lines.push(`${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 72)} runtime=${nodeRuntime} updated=${nodeActivity}`);
-    if (node.modelScenario || node.modelArg) lines.push(`   model: ${formatMonitorModel(node.modelScenario, node.modelArg, node.thinkingLevel)}`);
-    if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
-      lines.push(`   validation contract: ${formatMonitorValidationContract(node)}`);
-    }
-    if (node.lastValidationSummary) lines.push(`   validation: ${shortenMiddle(node.lastValidationSummary, 92)}`);
-    const subagents = subagentsByNode.get(node.nodeId) ?? [];
-    if (subagents.length === 0) {
-      lines.push("   subagents: none");
-      continue;
-    }
-    for (const subagent of subagents) {
-      const runtime = formatRuntime(subagent.createdAt, now);
-      const activity = formatAgo(subagent.lastActivityAt ?? subagent.updatedAt, now);
-      lines.push(`   ↳ [${subagent.status}] ${shortenMiddle(subagent.subagentId, 62)} runtime=${runtime} last=${activity}`);
-      if (subagent.branch) lines.push(`      branch: ${shortenMiddle(subagent.branch, 88)}`);
-      if (subagent.workspacePath) lines.push(`      workspace: ${shortenPath(subagent.workspacePath)}`);
-      const integration = formatSubagentIntegration(subagent);
-      if (integration) lines.push(`      integration: ${shortenMiddle(integration, 92)}`);
-      const note = subagent.integrationStatus ?? subagent.selfReportedResult;
-      if (note) lines.push(`      note: ${shortenMiddle(note, 92)}`);
-    }
-  }
+function latestSubagent(subagents: GoalSubagentRecord[]): GoalSubagentRecord | undefined {
+  return [...subagents].sort((left, right) => compareIso(right.updatedAt, left.updatedAt) || compareIso(right.lastActivityAt, left.lastActivityAt))[0];
+}
+
+function compareIso(left: string | undefined, right: string | undefined): number {
+  return Date.parse(left ?? "") - Date.parse(right ?? "");
+}
+
+function renderNodeListRow(node: GoalDagNode, subagents: GoalSubagentRecord[], index: number, now: Date): string {
+  const latest = latestSubagent(subagents);
+  const latestLabel = latest ? ` latest=${latest.status}` : " latest=-";
+  const model = node.modelScenario || node.modelArg ? ` model=${formatMonitorModel(node.modelScenario, node.modelArg, node.thinkingLevel)}` : "";
+  return `${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 58)} runners=${subagents.length}${latestLabel} updated=${formatAgo(node.updatedAt, now)}${model}`;
+}
+
+function renderRunnerListRow(subagent: GoalSubagentRecord, index: number, now: Date): string {
+  const activity = formatAgo(subagent.lastActivityAt ?? subagent.updatedAt, now);
+  const integration = subagent.integrationState ? ` integration=${subagent.integrationState}` : "";
+  return `${index + 1}. [${subagent.status}] ${shortenMiddle(subagent.subagentId, 62)} last=${activity}${integration}`;
+}
+
+function renderNodeLiveLines(node: GoalDagNode, subagents: GoalSubagentRecord[], transcript: GoalTranscriptSnapshot, now: Date): string[] {
+  const latest = latestSubagent(subagents);
+  const lines = [
+    `node: [${node.status}] ${node.nodeId}`,
+    `objective: ${node.objective}`,
+    `runtime=${formatRuntime(node.createdAt, now)} updated=${formatAgo(node.updatedAt, now)} model=${formatMonitorModel(node.modelScenario, node.modelArg, node.thinkingLevel)}`,
+    node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length ? `validation contract: ${formatMonitorValidationContract(node)}` : undefined,
+    node.expectedOutputs.length ? `expected outputs: ${node.expectedOutputs.join(", ")}` : undefined,
+    node.validators.length ? `validators: ${node.validators.join(" | ")}` : undefined,
+    node.lastValidationSummary ? `validation: ${node.lastValidationSummary}` : undefined,
+    `runners: ${formatStatusCounts(subagents.map((subagent) => subagent.status))}`,
+    latest ? `latest runner: [${latest.status}] ${latest.subagentId} last=${formatAgo(latest.lastActivityAt ?? latest.updatedAt, now)}` : "latest runner: none",
+    "transcript:",
+    ...transcript.lines,
+  ].filter((line): line is string => Boolean(line));
   return lines;
+}
+
+function renderRunnerLiveLines(node: GoalDagNode, subagent: GoalSubagentRecord, transcript: GoalTranscriptSnapshot, now: Date): string[] {
+  const integration = formatSubagentIntegration(subagent);
+  const note = subagent.integrationStatus ?? subagent.selfReportedResult;
+  return [
+    `runner: [${subagent.status}] ${subagent.subagentId}`,
+    `node: ${node.nodeId} (${node.status})`,
+    `runtime=${formatRuntime(subagent.createdAt, now)} last=${formatAgo(subagent.lastActivityAt ?? subagent.updatedAt, now)}`,
+    subagent.branch ? `branch: ${subagent.branch}` : undefined,
+    subagent.workspacePath ? `workspace: ${shortenPath(subagent.workspacePath)}` : undefined,
+    subagent.sessionFile ? `session: ${shortenPath(subagent.sessionFile)}` : undefined,
+    integration ? `integration: ${integration}` : undefined,
+    note ? `note: ${note}` : undefined,
+    "transcript:",
+    ...transcript.lines,
+  ].filter((line): line is string => Boolean(line));
 }
 
 function formatSubagentIntegration(subagent: GoalSubagentRecord): string | undefined {
