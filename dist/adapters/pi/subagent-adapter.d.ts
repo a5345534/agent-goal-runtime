@@ -9,6 +9,8 @@ export interface PiSubagentSessionInspectionOptions {
     readFile?: (path: string) => string;
     exists?: (path: string) => boolean;
     live?: boolean;
+    now?: () => Date;
+    staleAfterMs?: number;
 }
 export declare class PiHarnessSubagentAdapter implements HarnessSubagentAdapter {
     readonly adapterId = "pi";
