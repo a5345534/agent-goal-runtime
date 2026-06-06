@@ -17,6 +17,9 @@ export interface GoalTranscriptSnapshot {
   diagnostic?: string;
   entryCount: number;
   messageCount: number;
+  tokenTotal?: number;
+  modelArg?: string;
+  thinkingLevel?: string;
 }
 
 export interface GoalMonitorDagSnapshot {
@@ -342,9 +345,10 @@ export class GoalMonitorController {
       };
     }
     const transcript = readGoalTranscript(runner.sessionFile);
+    const runnerRecords = (dag.runners ?? []).filter((record) => record.subagentId === runner.subagentId);
     return {
       scopeLabel: `runners/${shortenMiddle(node.slug || node.nodeId, 40)}`,
-      liveTitle: `Runner ${runner.subagentId}`,
+      liveTitle: formatRunnerLiveTitle(node, runner, transcript, runnerRecords),
       liveLines: renderRunnerLiveLines(node, runner, transcript, now),
       liveDiagnostic: transcript.diagnostic,
       liveFollowsTail: Boolean(runner.sessionFile),
@@ -457,6 +461,17 @@ function renderRunnerListRow(subagent: GoalSubagentRecord, index: number, now: D
     ? ` proc=${liveCount}/${matchingRunners.length}${matchingRunners[0]?.runnerPid ? ` pid=${matchingRunners[0].runnerPid}` : ""}`
     : " proc=-";
   return `${index + 1}. [${subagent.status}] ${shortenMiddle(subagent.subagentId, 62)} last=${activity}${integration}${processSummary}`;
+}
+
+function formatRunnerLiveTitle(
+  node: GoalDagNode,
+  subagent: GoalSubagentRecord,
+  transcript: GoalTranscriptSnapshot,
+  runners: PiBackgroundRunnerRecord[],
+): string {
+  const runnerModel = runners.find((runner) => runner.modelArg)?.modelArg;
+  const model = formatMonitorModel(node.modelScenario, transcript.modelArg ?? runnerModel ?? node.modelArg, transcript.thinkingLevel ?? node.thinkingLevel);
+  return `Runner ${subagent.subagentId} model=${model} tokens=${formatCompactNumber(transcript.tokenTotal ?? 0)}`;
 }
 
 function renderRunnerLiveLines(node: GoalDagNode, subagent: GoalSubagentRecord, transcript: GoalTranscriptSnapshot, now: Date): string[] {
@@ -572,18 +587,31 @@ export function readGoalTranscriptLines(sessionFile: string | undefined): string
 }
 
 export function readGoalTranscript(sessionFile: string | undefined): GoalTranscriptSnapshot {
-  if (!sessionFile) return { lines: [], diagnostic: "Goal metadata has no sessionFile; use openSession or recreate the goal with the current runtime.", entryCount: 0, messageCount: 0 };
-  if (!existsSync(sessionFile)) return { lines: [], diagnostic: `Session file not found: ${sessionFile}`, entryCount: 0, messageCount: 0 };
+  if (!sessionFile) return { lines: [], diagnostic: "Goal metadata has no sessionFile; use openSession or recreate the goal with the current runtime.", entryCount: 0, messageCount: 0, tokenTotal: 0 };
+  if (!existsSync(sessionFile)) return { lines: [], diagnostic: `Session file not found: ${sessionFile}`, entryCount: 0, messageCount: 0, tokenTotal: 0 };
 
   const lines: string[] = [];
   let entryCount = 0;
   let messageCount = 0;
+  let tokenTotal = 0;
+  let modelArg: string | undefined;
+  let thinkingLevel: string | undefined;
   for (const rawLine of readFileSync(sessionFile, "utf8").split("\n")) {
     if (!rawLine.trim()) continue;
     try {
       const entry = JSON.parse(rawLine) as Record<string, unknown>;
       entryCount += 1;
       const rendered = renderSessionEntry(entry);
+      if (entry.type === "model_change") {
+        const provider = typeof entry.provider === "string" ? entry.provider : undefined;
+        const modelId = typeof entry.modelId === "string" ? entry.modelId : undefined;
+        modelArg = provider && modelId ? `${provider}/${modelId}` : modelId ?? modelArg;
+      }
+      if (entry.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") thinkingLevel = entry.thinkingLevel;
+      if (entry.type === "message") {
+        const message = entry.message as Record<string, unknown> | undefined;
+        if (message?.role === "assistant") tokenTotal += normalizeSessionAssistantUsage(message.usage);
+      }
       if (rendered.length === 0) continue;
       if (entry.type === "message" || entry.type === "custom_message") messageCount += 1;
       lines.push(...rendered);
@@ -591,7 +619,20 @@ export function readGoalTranscript(sessionFile: string | undefined): GoalTranscr
       lines.push("[malformed session entry]");
     }
   }
-  return { lines, entryCount, messageCount };
+  return { lines, entryCount, messageCount, tokenTotal, modelArg, thinkingLevel };
+}
+
+function normalizeSessionAssistantUsage(usage: unknown): number {
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return 0;
+  const record = usage as Record<string, unknown>;
+  const input = tokenChannelValue(record.input ?? record.inputTokens);
+  const output = tokenChannelValue(record.output ?? record.outputTokens);
+  if (input !== undefined || output !== undefined) return (input ?? 0) + (output ?? 0);
+  return tokenChannelValue(record.totalTokens ?? record.total) ?? 0;
+}
+
+function tokenChannelValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
 }
 
 function renderSessionEntry(entry: Record<string, unknown>): string[] {

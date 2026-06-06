@@ -99,6 +99,26 @@ test("goal monitor reads transcript lines without mutating session file", () => 
         rmSync(dir, { recursive: true, force: true });
     }
 });
+test("goal monitor transcript tracks session model, thinking, and assistant tokens", () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-monitor-usage-"));
+    const sessionFile = join(dir, "session.jsonl");
+    try {
+        writeFileSync(sessionFile, [
+            JSON.stringify({ type: "model_change", provider: "openai-codex", modelId: "gpt-5.3-codex-spark", timestamp: "2026-05-31T00:00:01.000Z" }),
+            JSON.stringify({ type: "thinking_level_change", thinkingLevel: "high", timestamp: "2026-05-31T00:00:02.000Z" }),
+            JSON.stringify({ type: "message", message: { role: "assistant", content: "done", usage: { input: 1000, output: 2000 } }, timestamp: "2026-05-31T00:00:03.000Z" }),
+            JSON.stringify({ type: "message", message: { role: "user", content: "thanks", usage: { input: 5000, output: 5000 } }, timestamp: "2026-05-31T00:00:04.000Z" }),
+        ].join("\n"));
+        const snapshot = readGoalTranscript(sessionFile);
+        assert.equal(snapshot.modelArg, "openai-codex/gpt-5.3-codex-spark");
+        assert.equal(snapshot.thinkingLevel, "high");
+        assert.equal(snapshot.tokenTotal, 3000);
+        assert.match(snapshot.lines.join("\n"), /model: openai-codex\/gpt-5\.3-codex-spark/);
+    }
+    finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
 test("goal monitor transcript includes custom messages, tool calls, and session metadata", () => {
     const dir = mkdtempSync(join(tmpdir(), "goal-monitor-full-"));
     const sessionFile = join(dir, "session.jsonl");
@@ -175,9 +195,13 @@ test("goal monitor enters runner list and binds live output to selected runner",
     const secondSession = join(dir, "runner-2.jsonl");
     const now = new Date("2026-05-31T00:05:00.000Z");
     try {
-        writeFileSync(firstSession, JSON.stringify({ type: "message", message: { role: "assistant", content: "first runner transcript" }, timestamp: "2026-05-31T00:04:10.000Z" }));
-        writeFileSync(secondSession, JSON.stringify({ type: "message", message: { role: "assistant", content: "second runner transcript" }, timestamp: "2026-05-31T00:04:30.000Z" }));
-        const nodes = [dagNode()];
+        writeFileSync(firstSession, [
+            JSON.stringify({ type: "model_change", provider: "openai-codex", modelId: "gpt-5.3-codex-spark", timestamp: "2026-05-31T00:04:00.000Z" }),
+            JSON.stringify({ type: "thinking_level_change", thinkingLevel: "high", timestamp: "2026-05-31T00:04:01.000Z" }),
+            JSON.stringify({ type: "message", message: { role: "assistant", content: "first runner transcript", usage: { input: 1000, output: 2000 } }, timestamp: "2026-05-31T00:04:10.000Z" }),
+        ].join("\n"));
+        writeFileSync(secondSession, JSON.stringify({ type: "message", message: { role: "assistant", content: "second runner transcript", usage: { totalTokens: 12 } }, timestamp: "2026-05-31T00:04:30.000Z" }));
+        const nodes = [dagNode({ modelScenario: "verify-fast", modelArg: "openai-codex/gpt-5.3-codex-spark", thinkingLevel: "high" })];
         const subagents = [
             subagent({ subagentId: "subagent-build-node-1", sessionFile: firstSession, branch: "goal/build-node-1", workspacePath: "/repo/.worktrees/build-node-1" }),
             subagent({ subagentId: "subagent-build-node-2", sessionFile: secondSession, branch: "goal/build-node-2", workspacePath: "/repo/.worktrees/build-node-2", integrationStatus: "working second" }),
@@ -203,14 +227,14 @@ test("goal monitor enters runner list and binds live output to selected runner",
         controller.handleInput("\r"); // runnerList for selected node
         const first = controller.render(140, theme).join("\n");
         assert.match(first, /scope=runners\/build-node focus=list rowOp=view/);
-        assert.match(first, /LIVE: Runner subagent-build-node-1/);
+        assert.match(first, /LIVE: Runner subagent-build-node-1 model=verify-fast -> openai-codex\/gpt-5\.3-codex-spark -> \[high\] tokens=3k/);
         assert.match(first, /first runner transcript/);
         assert.doesNotMatch(first, /second runner transcript/);
         assert.match(first, /LIST: Runners for build-node 1\/2/);
         assert.match(first, /> 1\. \[running\] subagent-build-node-1.*proc=1\/1 pid=123.*ops: \[view\].*openSession.*stop.*kill.*archive.*back/);
         controller.handleInput("\x1b[B"); // select second runner row; live follows selected runner.
         const second = controller.render(140, theme).join("\n");
-        assert.match(second, /LIVE: Runner subagent-build-node-2/);
+        assert.match(second, /LIVE: Runner subagent-build-node-2 model=verify-fast -> openai-codex\/gpt-5\.3-codex-spark -> \[high\] tokens=12/);
         assert.match(second, /second runner transcript/);
         assert.match(second, /note: working second/);
         assert.match(second, /> 2\. \[running\] subagent-build-node-2/);

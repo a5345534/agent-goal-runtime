@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "show-runner-model-and-token-usage",
+  "generatedAt": "2026-06-06T13:07:14.368872+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "216c02dedd28163fb8833cd307cf0a8f214e311294a043b2c5633ec780692521"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "d60df778d22e7d597b07cae0aabdced1d827c986f5e9267b6680e5d7d644ee50"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "6cbffad5cd516b435b75975ae2cc2796e17102daa1b1e6e584c04f7e0c2f383e"
+    }
+  ]
+}

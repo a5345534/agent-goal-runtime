@@ -18,6 +18,9 @@ export interface GoalTranscriptSnapshot {
     diagnostic?: string;
     entryCount: number;
     messageCount: number;
+    tokenTotal?: number;
+    modelArg?: string;
+    thinkingLevel?: string;
 }
 export interface GoalMonitorDagSnapshot {
     nodes: GoalDagNode[];
