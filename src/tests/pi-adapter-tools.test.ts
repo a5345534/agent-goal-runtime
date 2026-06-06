@@ -696,16 +696,19 @@ test("Pi goal start defaults to orchestration and target lifecycle commands use 
     assert.match(statusNotification, /DAG summary:\n  nodes:/);
     assert.match(statusNotification, /DAG nodes:\n  1\. \[running\]/);
     assert.match(statusNotification, /subagents:\n       - \[running\]/);
+    await commandHandler?.(`resume ${shortId}`, controllerCtx as never);
+    assert.equal(launched.length, 2);
+    assert.equal(prompts.length, 1);
+    assert.match(notifications.at(-1) ?? "", /controller poller recovered/);
     await commandHandler?.(`pause ${shortId}`, controllerCtx as never);
     await commandHandler?.(`resume ${shortId}`, controllerCtx as never);
-    assert.equal(launched.length, 3);
-    assert.equal(launched[2]?.sessionFile, goalSessionFile);
-    assert.equal(prompts.length, 2);
-    assert.match(prompts[1] ?? "", /Resume working toward the active goal/);
+    assert.equal(launched.length, 2);
+    assert.equal(prompts.length, 1);
+    assert.match(notifications.at(-1) ?? "", /controller poller recovered/);
     for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
-    // Session shutdown cleans up all lingering background sessions (controller + subagent adapter handles).
+    // Session shutdown cleans up lingering controller + subagent adapter handles, but DAG resume must not create a duplicate resumed-session handle.
     assert.ok(stopped.length >= 2, `expected at least 2 stopped handles, got ${stopped.length}: ${JSON.stringify(stopped)}`);
-    assert.ok(stopped.some((s) => s === "resumed-session"), "expected resumed-session to be stopped");
+    assert.equal(stopped.some((s) => s === "resumed-session"), false, "DAG resume must not launch a duplicate controller session");
     assert.ok(stopped.some((s) => s.startsWith("subagent-")), "expected subagent handle to be stopped");
   } finally {
     setPiBackgroundGoalSessionLauncherForTests();

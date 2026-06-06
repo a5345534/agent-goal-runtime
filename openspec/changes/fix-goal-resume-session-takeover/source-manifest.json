@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "fix-goal-resume-session-takeover",
+  "generatedAt": "2026-06-06T11:34:37.624046+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "c9bd054c548e0e4d2d3a870e7c7b63247268e8f7c4a8b3dcbbb2c51a3dab3f43"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "721190dcb084a166f9a525c030fccf33c69bfb190e4b219407240cc796425456"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "98d63f2d8256f0e782db0c6dc80394498d09975a5421cdd296dc5f2987fc4fe0"
+    }
+  ]
+}

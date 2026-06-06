@@ -1241,6 +1241,29 @@ async function runTargetGoalLifecycleCommand(
 }
 
 async function resumeTargetGoal(runtime: GoalRuntime, ctx: ExtensionCommandContext, goal: GoalSummary): Promise<void> {
+  const dagNodes = await runtime.listGoalDagNodes(goal.goalId);
+  if (goal.executionWorkspace && dagNodes.length > 0) {
+    const result = await runtime.resumeGoal(goal.sessionKey, { continueIfIdle: false });
+    const resumed = result.goal;
+    if (resumed?.status !== "active") {
+      ctx.ui.notify(result.message, "info");
+      return;
+    }
+    const binding: ResolvedWorkspaceBinding = {
+      workspace: goal.executionWorkspace,
+      branch: goal.branch,
+      ref: goal.ref,
+    };
+    const loop = await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding));
+    startPiGoalControllerPollingLoop(runtime, ctx, goal, binding);
+    const startedSubagentCount = loop.ticks.reduce((count, tick) => count + tick.started.length, 0);
+    ctx.ui.notify(
+      `Goal ${resumed.goalId.slice(0, 8)} resumed; controller poller recovered for ${dagNodes.length} DAG node(s), started ${startedSubagentCount} subagent(s). Use /goal monitor ${resumed.goalId.slice(0, 8)} to inspect it.`,
+      "info",
+    );
+    return;
+  }
+
   if (goal.executionWorkspace && goal.sessionFile) {
     const result = await runtime.resumeGoal(goal.sessionKey, { continueIfIdle: false });
     const resumed = result.goal;
