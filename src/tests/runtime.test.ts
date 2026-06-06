@@ -22,6 +22,15 @@ test("update_goal only accepts complete or blocked", async () => {
   assert.equal((await runtime.getGoal("s1")).goal?.status, "complete");
 });
 
+test("update_goal complete refuses blocked or failed DAG terminal nodes", async () => {
+  const runtime = new GoalRuntime({ store: new MemoryGoalStore() });
+  const created = await runtime.createOrReplaceGoal("s1", "finish with DAG", { confirmReplace: false });
+  await runtime.planGoalDag(created.goal?.goalId ?? "", [{ nodeId: "audit", objective: "Run final audit", status: "blocked" }]);
+
+  await assert.rejects(() => runtime.toolUpdateGoal("s1", "complete"), /blocked or failed/);
+  assert.equal((await runtime.getGoal("s1")).goal?.status, "active");
+});
+
 test("blocked requires three goal turns", async () => {
   const runtime = new GoalRuntime({ store: new MemoryGoalStore(), config: { retryBaseDelayMs: 0, retryJitterMs: 0 } });
   await runtime.createOrReplaceGoal("s1", "blocked test");

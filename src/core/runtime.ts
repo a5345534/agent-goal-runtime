@@ -527,6 +527,14 @@ export class GoalRuntime {
           `All DAG nodes must reach complete, blocked, or failed before the goal can be marked complete.`,
         );
       }
+      const unsuccessfulTerminal = orchestrationState.nodes.filter((node) => node.status === "blocked" || node.status === "failed");
+      if (unsuccessfulTerminal.length > 0) {
+        throw new Error(
+          `Goal cannot be completed: ${unsuccessfulTerminal.length} DAG node(s) are blocked or failed ` +
+          `(${unsuccessfulTerminal.map((node) => `${node.nodeId}:${node.status}`).join(", ")}). ` +
+          `Resolve or supersede blocked/failed DAG nodes before marking the goal complete.`,
+        );
+      }
       const integrationIssues = findRequiredSubagentIntegrationIssues(orchestrationState);
       if (integrationIssues.length > 0) {
         throw new Error(
