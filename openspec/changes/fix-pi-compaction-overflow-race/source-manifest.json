@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "fix-pi-compaction-overflow-race",
+  "generatedAt": "2026-06-06T08:33:12.446746+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "122bff99338cd57d78052a76a06e10a2ed88b2bf488b98b57fb58f62a093fbf5"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "03ddc27b781b45c2e4484a382bcf624b82e5de1acc6660eb9d5237d92419824c"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "3af3e7a9f3272b7861433c2cfd7999cae6872f664ce88694c50571a3e7dbb472"
+    }
+  ]
+}

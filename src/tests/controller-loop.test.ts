@@ -191,6 +191,27 @@ test("controller auto-retries existing failed subagents with WebSocket transport
   assert.equal((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.retryCount, 1);
 });
 
+test("controller does not auto-escalate context overflow while Pi reports recovery as running", async () => {
+  const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature", modelArg: "openai-codex/gpt-5.3-codex-spark" }]);
+  await runtime.saveGoalDagNode({ ...(await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode), status: "running", updatedAt: now });
+  await runtime.saveGoalSubagent(subagent({ status: "running", workspacePath: "/repo/.worktrees/build" }));
+  const adapter = new FakeSubagentAdapter();
+  adapter.states.set("subagent-1", {
+    status: "running",
+    error: "Pi context overflow recovery pending: Codex error: context_length_exceeded",
+    lastActivityAt: "2026-06-02T00:01:00.000Z",
+  });
+
+  const tick = await runtime.runGoalControllerTick("goal-1", { adapter, maxAutoRetries: 2 });
+
+  assert.equal(tick.started.length, 0);
+  assert.equal(tick.failed.length, 0);
+  assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
+  const saved = await runtime.getGoalSubagent("goal-1", "subagent-1");
+  assert.equal(saved?.status, "running");
+  assert.match(saved?.integrationStatus ?? "", /context overflow recovery pending/);
+});
+
 test("controller tick treats transient database locks as retryable sync skips", async () => {
   const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
   await runtime.saveGoalDagNode({ ...(await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode), status: "running", updatedAt: now });

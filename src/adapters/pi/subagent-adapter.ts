@@ -43,6 +43,14 @@ const RESULT_MARKER = /(?:^|\n)\s*SUBAGENT_RESULT\s*:\s*([\s\S]*?)(?=\n\s*SUBAGE
 const BLOCKED_MARKER = /(?:^|\n)\s*SUBAGENT_BLOCKED\s*:\s*([\s\S]*?)(?=\n\s*SUBAGENT_[A-Z_]+\s*:|$)/i;
 const STATUS_BLOCKED_MARKER = /(?:^|\n)\s*SUBAGENT_STATUS\s*:\s*blocked\b/i;
 const DEFAULT_STALE_SUBAGENT_SESSION_MS = 10 * 60_000;
+const CONTEXT_OVERFLOW_ERROR_PATTERNS = [
+  /context_length_exceeded/i,
+  /context window/i,
+  /input exceeds/i,
+  /too many tokens/i,
+  /maximum context length/i,
+  /reduce the length/i,
+];
 
 export class PiHarnessSubagentAdapter implements HarnessSubagentAdapter {
   readonly adapterId = "pi";
@@ -182,6 +190,9 @@ export function readPiSubagentSessionState(
     return withInspectionMetadata({ status: "selfReportedComplete", selfReportedResult: result, lastActivityAt: parsed.lastActivityAt }, parsed);
   }
   if (parsed.lastError) {
+    if (isRecoverableContextOverflow(parsed, options)) {
+      return withInspectionMetadata({ status: "running", error: `Pi context overflow recovery pending: ${parsed.lastError}`, lastActivityAt: parsed.lastActivityAt }, parsed);
+    }
     return withInspectionMetadata({ status: "failed", error: parsed.lastError, lastActivityAt: parsed.lastActivityAt }, parsed);
   }
   const terminalish = parsed.lastMessageRole === "assistant" ? terminalishAssistantTextWithoutMarker(parsed.lastAssistantText) : undefined;
@@ -209,6 +220,14 @@ function parsePiSessionFile(content: string): ParsedPiSessionState {
     }
     parsed.entryCount += 1;
     if (typeof entry.timestamp === "string") parsed.lastActivityAt = entry.timestamp;
+    if (entry.type === "compaction") {
+      // Pi writes compaction entries after context-overflow assistant errors and then
+      // rebuilds/retries the session. Treat a later compaction as recovery evidence
+      // so the pre-compaction error does not remain sticky in runtime polling.
+      parsed.lastError = undefined;
+      parsed.lastMessageRole = "compaction";
+      continue;
+    }
     if (entry.type !== "message") continue;
     parsed.messageCount += 1;
     const message = entry.message as Record<string, unknown> | undefined;
@@ -281,6 +300,22 @@ function terminalishAssistantTextWithoutMarker(text: string | undefined): string
   const successLike = /(\bdone\b|\bcompleted\b|\bfinished\b|\bimplemented\b|verification passed|validation passed|tests? passed|已完成|完成到目前|驗證.*通過|測試.*通過|已處理)/i.test(cleaned);
   const blockedLike = /(\bblocked\b|cannot complete|can't complete|unable to complete|無法完成|阻塞|卡住)/i.test(cleaned);
   return successLike || blockedLike ? cleaned : undefined;
+}
+
+function isRecoverableContextOverflow(parsed: ParsedPiSessionState, options: PiSubagentSessionInspectionOptions): boolean {
+  if (!parsed.lastError || !isContextOverflowError(parsed.lastError)) return false;
+  if (options.live !== true) return false;
+  const lastActivity = parsed.lastActivityAt;
+  if (!lastActivity) return true;
+  const lastMs = Date.parse(lastActivity);
+  if (!Number.isFinite(lastMs)) return true;
+  const nowMs = (options.now?.() ?? new Date()).getTime();
+  const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_SUBAGENT_SESSION_MS;
+  return nowMs - lastMs < staleAfterMs;
+}
+
+function isContextOverflowError(message: string): boolean {
+  return CONTEXT_OVERFLOW_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 function staleUnresolvedSessionReason(parsed: ParsedPiSessionState, options: PiSubagentSessionInspectionOptions): string | undefined {
