@@ -11,6 +11,7 @@ const NON_TERMINAL_SUBAGENT_STATUSES = new Set([
     "needsFollowup",
 ]);
 const MAX_AUTO_RETRIES_DEFAULT = 2;
+const MAX_VALIDATION_FOLLOWUPS_FOR_SAME_FAILURE = 2;
 const TRANSIENT_ERROR_PATTERNS = [
     /server_error/i,
     /timeout/i,
@@ -427,6 +428,16 @@ async function validateOrHold(runtime, options, state, node, subagent, result, t
         return;
     }
     if (validation.followupPrompt) {
+        const repeat = repeatedValidationFailure(validatingSubagent, validation);
+        if (repeat.count > MAX_VALIDATION_FOLLOWUPS_FOR_SAME_FAILURE) {
+            const repeatSummary = appendSummary(validationSummary, `repeated identical controller validation failure (${repeat.count} occurrences); automatic same-session follow-ups are capped at ${MAX_VALIDATION_FOLLOWUPS_FOR_SAME_FAILURE}`);
+            const blockedNode = withNodePatch(validatingNode, { status: "blocked", lastValidationSummary: repeatSummary });
+            const blockedSubagent = withSubagentPatch(validationResults, { status: "blocked", integrationStatus: repeatSummary });
+            await runtime.saveGoalDagNode(blockedNode);
+            await runtime.saveGoalSubagent(blockedSubagent);
+            result.blocked.push(blockedNode);
+            return;
+        }
         const followed = await runtime.sendGoalSubagentPrompt(options.adapter, validationResults, validation.followupPrompt, {
             metadata: options.metadata,
             now: tickStartedAt,
@@ -592,6 +603,20 @@ function appendValidationResults(subagent, validation) {
     if (additions.length === 0)
         return subagent;
     return { ...subagent, controllerValidationResults: [...(subagent.controllerValidationResults ?? []), ...additions] };
+}
+function repeatedValidationFailure(subagent, validation) {
+    const signature = validationFailureSignature(validation);
+    if (!signature)
+        return { count: 0 };
+    const previous = (subagent.controllerValidationResults ?? []).filter((item) => normalizeValidationFailureSignature(item) === signature).length;
+    return { signature, count: previous + 1 };
+}
+function validationFailureSignature(validation) {
+    return normalizeValidationFailureSignature(validation.summary) ?? (validation.validationSignals ?? []).map(normalizeValidationFailureSignature).find(Boolean);
+}
+function normalizeValidationFailureSignature(value) {
+    const normalized = value?.replace(/\s+/g, " ").trim();
+    return normalized ? normalized : undefined;
 }
 function withNodePatch(node, patch) {
     return { ...node, ...patch, updatedAt: new Date().toISOString() };

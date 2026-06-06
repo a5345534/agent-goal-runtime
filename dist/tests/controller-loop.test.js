@@ -109,6 +109,25 @@ test("controller validator failure can send a follow-up prompt instead of comple
     assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
     assert.equal((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.status, "running");
 });
+test("controller blocks repeated identical validator follow-up failures", async () => {
+    const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
+    await runtime.saveGoalDagNode({ ...await runtime.getGoalDagNode("goal-1", "build"), status: "running", updatedAt: now });
+    await runtime.saveGoalSubagent(subagent({ controllerValidationResults: ["tests failed", "tests failed"] }));
+    const adapter = new FakeSubagentAdapter();
+    adapter.states.set("subagent-1", { status: "selfReportedComplete", selfReportedResult: "done", lastActivityAt: "2026-06-02T00:01:00.000Z" });
+    const tick = await runtime.runGoalControllerTick("goal-1", {
+        adapter,
+        validator: () => ({ status: "failed", summary: "tests failed", followupPrompt: "Fix failing tests" }),
+    });
+    assert.equal(tick.followups.length, 0);
+    assert.equal(adapter.prompts.length, 0);
+    assert.equal(tick.blocked.length, 1);
+    assert.match(tick.blocked[0]?.lastValidationSummary ?? "", /repeated identical controller validation failure \(3 occurrences\)/);
+    assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "blocked");
+    const saved = await runtime.getGoalSubagent("goal-1", "subagent-1");
+    assert.equal(saved?.status, "blocked");
+    assert.deepEqual(saved?.controllerValidationResults, ["tests failed", "tests failed", "tests failed"]);
+});
 test("controller asks idle subagents with terminal text but missing outcome marker to re-report explicitly", async () => {
     const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
     await runtime.saveGoalDagNode({ ...await runtime.getGoalDagNode("goal-1", "build"), status: "running", updatedAt: now });
