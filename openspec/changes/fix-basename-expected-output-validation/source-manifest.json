@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "fix-basename-expected-output-validation",
+  "generatedAt": "2026-06-06T11:55:14.052600+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "ffcc60191e00cf74d12cb81767c688554a01f671ab26625c36c369ab10fc402b"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "1d0c9d0a34e43f4457c7165a5bf46593133a89bd6124125e21565c5d05bec85d"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "7cdaa6bff74ee82978f6ee7cc5fc62a1ca78f4c8d60c27c05d64a6f38aa7ab8c"
+    }
+  ]
+}

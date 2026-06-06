@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createControllerValidationRunner, runControllerValidation } from "../core/index.js";
@@ -65,6 +65,48 @@ test("controller validation runner fails missing expected outputs with follow-up
         assert.equal(result.status, "failed");
         assert.match(result.summary ?? "", /missing outputs/);
         assert.match(result.followupPrompt ?? "", /missing.txt/);
+    }
+    finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+test("controller validation runner accepts basename expected outputs from changed module paths", () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-validation-basename-"));
+    try {
+        execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+        execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
+        execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+        mkdirSync(join(dir, "projects/backend/module/cost-collection-module/src/main/java/events"), { recursive: true });
+        mkdirSync(join(dir, "other-module/src/main/java/events"), { recursive: true });
+        const expectedPath = join(dir, "projects/backend/module/cost-collection-module/src/main/java/events/WorkflowExpenseEvent.java");
+        writeFileSync(expectedPath, "class WorkflowExpenseEvent { int before; }\n");
+        writeFileSync(join(dir, "other-module/src/main/java/events/WorkflowExpenseEvent.java"), "class WorkflowExpenseEvent {}\n");
+        execFileSync("git", ["add", "."], { cwd: dir });
+        execFileSync("git", ["commit", "-m", "base"], { cwd: dir, stdio: "ignore" });
+        writeFileSync(expectedPath, "class WorkflowExpenseEvent { int after; }\n");
+        const result = runControllerValidation(request({
+            node: { ...request().node, expectedOutputs: ["WorkflowExpenseEvent.java"] },
+            subagent: { ...request().subagent, workspacePath: dir },
+        }));
+        assert.equal(result.status, "passed");
+    }
+    finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+test("controller validation runner rejects ambiguous basename expected outputs without git evidence", () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-validation-basename-ambiguous-"));
+    try {
+        mkdirSync(join(dir, "a"), { recursive: true });
+        mkdirSync(join(dir, "b"), { recursive: true });
+        writeFileSync(join(dir, "a", "Duplicate.java"), "class Duplicate {}\n");
+        writeFileSync(join(dir, "b", "Duplicate.java"), "class Duplicate {}\n");
+        const result = runControllerValidation(request({
+            node: { ...request().node, expectedOutputs: ["Duplicate.java"] },
+            subagent: { ...request().subagent, workspacePath: dir },
+        }));
+        assert.equal(result.status, "failed");
+        assert.match(result.summary ?? "", /missing outputs: Duplicate\.java/);
     }
     finally {
         rmSync(dir, { recursive: true, force: true });

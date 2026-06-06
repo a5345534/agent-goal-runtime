@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { GoalControllerValidationRequest, GoalControllerValidationResult, GoalControllerValidator } from "./controller-loop.js";
 import type { GoalValidationEvidenceRequirement } from "./types.js";
@@ -104,11 +104,48 @@ export function runControllerValidation(
 }
 
 function expectedOutputsMissing(request: GoalControllerValidationRequest): string[] {
+  const changedBasenames = new Set(changedPaths(request).map((path) => basename(path)));
+  return request.node.expectedOutputs.filter((output) => !expectedOutputExists(request, output, changedBasenames));
+}
+
+function expectedOutputExists(request: GoalControllerValidationRequest, output: string, changedBasenames: Set<string>): boolean {
   const cwd = request.subagent.workspacePath;
-  return request.node.expectedOutputs.filter((output) => {
-    const path = isAbsolute(output) ? output : cwd ? resolve(cwd, output) : output;
-    return !existsSync(path);
-  });
+  const path = isAbsolute(output) ? output : cwd ? resolve(cwd, output) : output;
+  if (existsSync(path)) return true;
+  if (!cwd || isPathLikeOutput(output)) return false;
+  if (changedBasenames.has(output)) return true;
+  return workspaceBasenameMatchCount(cwd, output, 2) === 1;
+}
+
+function isPathLikeOutput(output: string): boolean {
+  return output.includes("/") || output.includes("\\");
+}
+
+function workspaceBasenameMatchCount(root: string, expectedBasename: string, limit: number): number {
+  let count = 0;
+  const visit = (dir: string) => {
+    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (count >= limit) return;
+      if (entry.isDirectory()) {
+        if (shouldSkipExpectedOutputScanDir(entry.name)) continue;
+        visit(resolve(dir, entry.name));
+        continue;
+      }
+      if (entry.isFile() && entry.name === expectedBasename) count += 1;
+    }
+  };
+  visit(root);
+  return count;
+}
+
+function shouldSkipExpectedOutputScanDir(name: string): boolean {
+  return name === ".git" || name === "node_modules" || name === "target" || name === "dist" || name === "build" || name === ".gradle";
 }
 
 function runValidatorCommand(
