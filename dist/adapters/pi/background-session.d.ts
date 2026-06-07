@@ -11,6 +11,8 @@ export interface BackgroundGoalSessionHandle {
     sessionId: string;
     setSessionName(name: string): Promise<void>;
     sendPrompt(prompt: string): Promise<void>;
+    /** True while the detached background runner process is still alive. */
+    isAlive?(): boolean;
     stop(): void;
 }
 export type BackgroundGoalSessionLauncher = (request: BackgroundGoalSessionLaunchRequest) => Promise<BackgroundGoalSessionHandle>;

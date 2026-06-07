@@ -48,6 +48,7 @@ export async function launchPiRpcBackgroundGoalSession(request) {
             sendPrompt: async (prompt) => {
                 fs.writeFileSync(commandPath, JSON.stringify({ sessionName: pendingSessionName, prompt }), "utf8");
             },
+            isAlive: () => isPidAlive(ready.runnerPid),
             stop: () => stopDetachedProcessGroup(ready.runnerPid),
         };
     }
@@ -89,6 +90,17 @@ function stopDetachedProcessGroup(pid) {
         catch {
             // Already stopped.
         }
+    }
+}
+function isPidAlive(pid) {
+    if (!pid || pid <= 0)
+        return false;
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
     }
 }
 function readLogTail(logPath) {

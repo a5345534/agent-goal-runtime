@@ -16,11 +16,14 @@ import {
   type BackgroundGoalSessionLauncher,
   type BackgroundGoalSessionLaunchRequest,
 } from "./background-session.js";
+import { readPiBackgroundRunnerInventory } from "./runner-ops.js";
 
 export interface PiHarnessSubagentAdapterOptions {
   launcher?: BackgroundGoalSessionLauncher;
   modelArg?: string;
   now?: () => Date;
+  /** Override for tests or alternate hosts; defaults to /tmp background-runner inventory. */
+  runnerAlive?: (subagent: GoalSubagentRecord) => boolean;
 }
 
 export interface PiSubagentSessionInspectionOptions {
@@ -58,12 +61,14 @@ export class PiHarnessSubagentAdapter implements HarnessSubagentAdapter {
   private readonly launcher: BackgroundGoalSessionLauncher;
   private readonly modelArg?: string;
   private readonly now: () => Date;
+  private readonly runnerAlive: (subagent: GoalSubagentRecord) => boolean;
   private readonly handles = new Map<string, BackgroundGoalSessionHandle>();
 
   constructor(options: PiHarnessSubagentAdapterOptions = {}) {
     this.launcher = options.launcher ?? launchPiRpcBackgroundGoalSession;
     this.modelArg = options.modelArg;
     this.now = options.now ?? (() => new Date());
+    this.runnerAlive = options.runnerAlive ?? hasLiveBackgroundRunnerForSubagent;
   }
 
   async startSession(request: HarnessSubagentStartRequest): Promise<HarnessSubagentStartResult> {
@@ -89,8 +94,9 @@ export class PiHarnessSubagentAdapter implements HarnessSubagentAdapter {
   }
 
   getSessionState(request: HarnessSubagentStateRequest): HarnessSubagentSessionState {
+    const handle = this.handles.get(keyForSubagent(request.subagent));
     return readPiSubagentSessionState(request.subagent, {
-      live: this.handles.has(keyForSubagent(request.subagent)) || isLiveSubagentStatus(request.subagent.status),
+      live: Boolean(handle?.isAlive?.()) || this.runnerAlive(request.subagent),
       now: this.now,
     });
   }
@@ -313,8 +319,10 @@ function keyForSubagent(subagent: GoalSubagentRecord): string {
   return subagent.subagentId;
 }
 
-function isLiveSubagentStatus(status: GoalSubagentRecord["status"]): boolean {
-  return ["workspaceCreated", "sessionStarted", "running", "idle", "needsFollowup", "selfReportedComplete", "controllerValidating"].includes(status);
+function hasLiveBackgroundRunnerForSubagent(subagent: GoalSubagentRecord): boolean {
+  return readPiBackgroundRunnerInventory(subagent.goalId, [subagent]).some((record) =>
+    record.subagentId === subagent.subagentId && (record.runnerAlive || record.childAlive),
+  );
 }
 
 function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {

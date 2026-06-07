@@ -19,6 +19,8 @@ export interface BackgroundGoalSessionHandle {
   sessionId: string;
   setSessionName(name: string): Promise<void>;
   sendPrompt(prompt: string): Promise<void>;
+  /** True while the detached background runner process is still alive. */
+  isAlive?(): boolean;
   stop(): void;
 }
 
@@ -70,6 +72,7 @@ export async function launchPiRpcBackgroundGoalSession(request: BackgroundGoalSe
       sendPrompt: async (prompt: string) => {
         fs.writeFileSync(commandPath, JSON.stringify({ sessionName: pendingSessionName, prompt }), "utf8");
       },
+      isAlive: () => isPidAlive(ready.runnerPid),
       stop: () => stopDetachedProcessGroup(ready.runnerPid),
     };
   } catch (error) {
@@ -108,6 +111,16 @@ function stopDetachedProcessGroup(pid: number | undefined): void {
     } catch {
       // Already stopped.
     }
+  }
+}
+
+function isPidAlive(pid: number | undefined): boolean {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 

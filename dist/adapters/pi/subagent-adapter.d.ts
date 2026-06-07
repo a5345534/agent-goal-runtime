@@ -4,6 +4,8 @@ export interface PiHarnessSubagentAdapterOptions {
     launcher?: BackgroundGoalSessionLauncher;
     modelArg?: string;
     now?: () => Date;
+    /** Override for tests or alternate hosts; defaults to /tmp background-runner inventory. */
+    runnerAlive?: (subagent: GoalSubagentRecord) => boolean;
 }
 export interface PiSubagentSessionInspectionOptions {
     readFile?: (path: string) => string;
@@ -17,6 +19,7 @@ export declare class PiHarnessSubagentAdapter implements HarnessSubagentAdapter 
     private readonly launcher;
     private readonly modelArg?;
     private readonly now;
+    private readonly runnerAlive;
     private readonly handles;
     constructor(options?: PiHarnessSubagentAdapterOptions);
     startSession(request: HarnessSubagentStartRequest): Promise<HarnessSubagentStartResult>;

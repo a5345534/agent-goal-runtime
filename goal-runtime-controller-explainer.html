@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Goal Runtime：Goal / Controller / Node / Subagent 運作邏輯</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --line: #334155;
+      --accent: #38bdf8;
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --bad: #fb7185;
+      --code: #020617;
+    }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+      background: radial-gradient(circle at top left, #1e3a8a 0, var(--bg) 38rem);
+      color: var(--text);
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 48px 20px 80px; }
+    header { margin-bottom: 28px; }
+    h1 { font-size: clamp(2rem, 5vw, 4rem); line-height: 1.1; margin: 0 0 12px; }
+    h2 { margin-top: 0; font-size: 1.55rem; }
+    h3 { margin-bottom: 8px; }
+    p, li { color: var(--text); }
+    .lead { color: #dbeafe; font-size: 1.15rem; max-width: 880px; }
+    .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .card { background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 18px; padding: 20px; box-shadow: 0 12px 28px rgba(0,0,0,.22); }
+    .card strong { color: white; }
+    .tag { display: inline-block; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: #bfdbfe; background: rgba(56,189,248,.10); font-size: .86rem; }
+    .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .accent { color: var(--accent); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { background: var(--code); padding: .12rem .35rem; border-radius: 6px; }
+    pre { background: var(--code); border: 1px solid var(--line); border-radius: 14px; padding: 14px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 14px; border: 1px solid var(--line); }
+    th, td { border-bottom: 1px solid var(--line); padding: 11px 12px; vertical-align: top; }
+    th { text-align: left; background: var(--panel-2); }
+    tr:last-child td { border-bottom: 0; }
+    .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .step { border: 1px solid var(--line); background: rgba(15,23,42,.76); border-radius: 12px; padding: 10px 12px; }
+    .arrow { color: var(--muted); }
+    .note { border-left: 4px solid var(--accent); padding: 10px 14px; background: rgba(56,189,248,.10); border-radius: 10px; }
+    .danger { border-left-color: var(--bad); background: rgba(251,113,133,.10); }
+    .small { color: var(--muted); font-size: .94rem; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="tag">agent-goal-runtime</span>
+    <h1>Goal / Controller / Node / Subagent 運作邏輯</h1>
+    <p class="lead">這份文件說明目前 runtime 如何把一個 Goal 拆成 DAG nodes、由 controller 固定程序推進、監控與預處理 subagent runner/session 狀態，並在 stale runner、缺 session transcript、validation 失敗或 integration 阻塞時做 deterministic recovery。</p>
+  </header>
+
+  <section class="grid">
+    <div class="card"><h2>Goal 是什麼？</h2><p>Goal 是使用者的高階目標與持久化狀態。它包含 objective、activity state、DAG nodes、subagent attempts、ledger history，以及必要時的 execution workspace / promotion target。</p></div>
+    <div class="card"><h2>Controller 是什麼？</h2><p>Controller 是固定程序，不是 LLM agent。它只做排程、同步、validation、integration、recovery、closeout guard，不自行語意改程式。</p></div>
+    <div class="card"><h2>Node 是什麼？</h2><p>Node 是 DAG 裡可排程的工作單元，包含 objective、dependencies、expected outputs、validators、completion gates、workspace binding 與模型設定。</p></div>
+    <div class="card"><h2>Subagent 是什麼？</h2><p>Subagent 是某個 node 的一次執行 attempt。它有 harness session、session JSONL、workspace、branch、prompt history、retry count 與 integration state。</p></div>
+  </section>
+
+  <section class="card">
+    <h2>Controller 每次 poll 的固定流程</h2>
+    <div class="flow">
+      <span class="step">1. 讀 durable orchestration state</span><span class="arrow">→</span>
+      <span class="step">2. sync subagents</span><span class="arrow">→</span>
+      <span class="step">3. reconcile outcomes</span><span class="arrow">→</span>
+      <span class="step">4. validation / integration</span><span class="arrow">→</span>
+      <span class="step">5. start ready nodes</span><span class="arrow">→</span>
+      <span class="step">6. append controller ledger</span>
+    </div>
+    <p>所有決策都寫回 store，因此 controller crash/restart 後可以從 DB 與 session files 繼續。</p>
+  </section>
+
+  <section class="card">
+    <h2>Controller 監控與預處理</h2>
+    <table>
+      <thead><tr><th>檢查項</th><th>固定處理</th><th>結果</th></tr></thead>
+      <tbody>
+        <tr><td>runner live + session file missing</td><td>視為啟動中 grace 狀態，繼續等待下一次 poll。</td><td><span class="warn">starting / running</span></td></tr>
+        <tr><td>runner dead + session file missing</td><td>判定為 non-resumable stale attempt；舊 attempt terminalize，retry budget 內開 replacement subagent。</td><td><span class="warn">replacement started</span></td></tr>
+        <tr><td>session file exists + transcript stale after tool result</td><td>保留同一 session，送 stale continuation follow-up。</td><td><span class="warn">same-session recovery</span></td></tr>
+        <tr><td>explicit <code>SUBAGENT_RESULT</code></td><td>進入 controller validation；validators 必跑。</td><td><span class="ok">selfReportedComplete → validating</span></td></tr>
+        <tr><td>explicit <code>SUBAGENT_BLOCKED</code></td><td>若 goal active 且 retry budget 未用完，先做 same-session blocked-node recovery；provider/quota 類直接 blocked。</td><td><span class="warn">followup or blocked</span></td></tr>
+        <tr><td>validation failed</td><td>有 follow-up prompt 時送回 subagent；相同 failure 超過 cap 後 blocked。</td><td><span class="warn">needsFollowup / blocked</span></td></tr>
+        <tr><td>native-git integration needed</td><td>validation passed 後 merge subagent branch into controller branch；dirty/conflict fail closed。</td><td><span class="ok">complete</span> 或 <span class="bad">blocked</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Node 生命週期</h2>
+    <pre>planned → ready → running → selfReportedComplete/controllerValidating
+          ↘ needsFollowup ↗       ↘ complete
+                               ↘ blocked / failed / superseded</pre>
+    <ul>
+      <li><strong>planned</strong>：尚未滿足 dependencies 或尚未排程。</li>
+      <li><strong>ready</strong>：dependencies 已完成，queue policy 允許啟動。</li>
+      <li><strong>running</strong>：已有 non-terminal subagent attempt。</li>
+      <li><strong>needsFollowup</strong>：controller 需要 subagent 補結果 marker 或修 validation failure。</li>
+      <li><strong>controllerValidating</strong>：subagent 已回報完成，controller 正在跑 deterministic validators / gates。</li>
+      <li><strong>complete</strong>：validators / integration gates 完成。</li>
+      <li><strong>blocked / failed</strong>：retry 或外部條件阻止繼續；active goal 可對部分 blocked 狀態做 bounded recovery。</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Subagent 生命週期</h2>
+    <pre>planned → workspaceCreated → sessionStarted → running ↔ idle
+                                      ↓              ↓
+                               needsFollowup ← selfReportedComplete
+                                      ↓              ↓
+                                  blocked/failed → controllerValidating → complete</pre>
+    <ul>
+      <li><strong>sessionStarted / running</strong> 不再單獨代表 runner live；Pi adapter 會看可驗證仍 alive 的 in-memory handle 或 background-runner PID inventory。</li>
+      <li><strong>missing session replacement</strong>：如果 session JSONL 不存在且 runner 已死，controller 不會對不存在的 session 送 prompt，而是開新的 replacement attempt。</li>
+      <li><strong>same-session recovery</strong>：只在 transcript 存在且可 resume 時使用，避免丟失上下文。</li>
+      <li><strong>retryCount</strong> 會限制自動修復，避免無限重啟或 retry storm。</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>完成與 closeout 語意</h2>
+    <p>Goal 的 <code>complete</code> 不只是 controller branch 上的 nodes 完成。對 auto Pi/native-git goal，complete 必須代表：</p>
+    <ul>
+      <li>所有 required DAG nodes 都達到 <code>complete</code>；</li>
+      <li>repository-changing subagent branches 已 integration；</li>
+      <li>controller branch promotion/merge 到 target ref 成功；</li>
+      <li>cleanup 在 promotion 成功後才執行；</li>
+      <li>dirty worktree、merge conflict、blocked/failed required nodes 都會 fail closed。</li>
+    </ul>
+    <p class="note danger">因此 subagent 自己說「完成」只是 evidence；真正完成由 controller validation + integration + promotion guard 決定。</p>
+  </section>
+
+  <section class="card">
+    <h2>目前新增的 stale runner/session 控制</h2>
+    <pre>if subagent is syncable:
+  state = adapter.getSessionState(subagent)
+
+Pi adapter liveness:
+  live = verifiedInMemoryHandlePidAlive(subagent) || liveBackgroundRunnerPidExists(subagent)
+
+if sessionFile missing and live:
+  report starting
+
+if sessionFile missing and !live:
+  report failed: session file not found
+
+controller failed recovery:
+  if error matches missing-session:
+    if retryCount &lt; maxAutoRetries:
+      mark old attempt failed
+      start replacement subagent in same workspace/branch when available
+    else:
+      block node and subagent with diagnostic</pre>
+  </section>
+
+  <footer class="small">
+    <p>Source of truth remains the TypeScript runtime and persisted goal store. This HTML is an operator explainer for the current implementation.</p>
+  </footer>
+</main>
+</body>
+</html>

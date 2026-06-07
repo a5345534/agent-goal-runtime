@@ -89,6 +89,7 @@ test("Pi orchestrated goal start plans DAG and launches a subagent worktree", as
       sendPrompt: async (prompt: string) => {
         prompts.push(prompt);
       },
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -191,7 +192,8 @@ test("Pi goal start serializes the initial controller tick against recovery poll
         sendPrompt: async (prompt: string) => {
           prompts.push(prompt);
         },
-        stop: () => undefined,
+        isAlive: () => true,
+      stop: () => undefined,
       };
     });
   });
@@ -296,6 +298,7 @@ test("Pi controller poller finalizes completed subagents and removes completed w
           ].join("\n"),
         );
       },
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -397,6 +400,7 @@ test("Pi controller poller promotes controller branch into target before complet
           ].join("\n"),
         );
       },
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -496,6 +500,7 @@ test("Pi controller poller blocks promotion on dirty target and preserves worktr
           ].join("\n"),
         );
       },
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -592,6 +597,7 @@ test("Pi session start recovers active goal pollers from durable state", async (
           ].join("\n"),
         );
       },
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -689,6 +695,7 @@ test("Pi goal start can load an explicit DAG file", async () => {
       sendPrompt: async (prompt: string) => {
         prompts.push(prompt);
       },
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -784,6 +791,7 @@ test("Pi DAG model routing selects controller and subagent models", async () => 
       sessionId: request.sessionId ?? `model-session-${launched.length}`,
       setSessionName: async () => undefined,
       sendPrompt: async () => undefined,
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -851,6 +859,7 @@ test("Pi orchestrated goal start can auto-allocate a controller worktree", async
       sessionId: request.sessionId ?? `auto-session-${launched.length}`,
       setSessionName: async () => undefined,
       sendPrompt: async () => undefined,
+      isAlive: () => true,
       stop: () => undefined,
     };
   });
@@ -925,6 +934,7 @@ test("Pi goal start defaults to orchestration and target lifecycle commands use 
       sendPrompt: async (prompt: string) => {
         prompts.push(prompt);
       },
+      isAlive: () => true,
       stop: () => stopped.push(request.sessionId ?? "resumed-session"),
     };
   });

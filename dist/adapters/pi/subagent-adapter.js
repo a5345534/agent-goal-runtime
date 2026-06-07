@@ -1,6 +1,7 @@
 import { closeSync, existsSync, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { launchPiRpcBackgroundGoalSession, } from "./background-session.js";
+import { readPiBackgroundRunnerInventory } from "./runner-ops.js";
 const RESULT_MARKER = /(?:^|\n)\s*SUBAGENT_RESULT\s*:\s*([\s\S]*?)(?=\n\s*SUBAGENT_[A-Z_]+\s*:|$)/i;
 const BLOCKED_MARKER = /(?:^|\n)\s*SUBAGENT_BLOCKED\s*:\s*([\s\S]*?)(?=\n\s*SUBAGENT_[A-Z_]+\s*:|$)/i;
 const STATUS_BLOCKED_MARKER = /(?:^|\n)\s*SUBAGENT_STATUS\s*:\s*blocked\b/i;
@@ -18,11 +19,13 @@ export class PiHarnessSubagentAdapter {
     launcher;
     modelArg;
     now;
+    runnerAlive;
     handles = new Map();
     constructor(options = {}) {
         this.launcher = options.launcher ?? launchPiRpcBackgroundGoalSession;
         this.modelArg = options.modelArg;
         this.now = options.now ?? (() => new Date());
+        this.runnerAlive = options.runnerAlive ?? hasLiveBackgroundRunnerForSubagent;
     }
     async startSession(request) {
         const launch = launchRequestForStart(request, this.modelArg);
@@ -45,8 +48,9 @@ export class PiHarnessSubagentAdapter {
         await handle.sendPrompt(request.prompt);
     }
     getSessionState(request) {
+        const handle = this.handles.get(keyForSubagent(request.subagent));
         return readPiSubagentSessionState(request.subagent, {
-            live: this.handles.has(keyForSubagent(request.subagent)) || isLiveSubagentStatus(request.subagent.status),
+            live: Boolean(handle?.isAlive?.()) || this.runnerAlive(request.subagent),
             now: this.now,
         });
     }
@@ -265,8 +269,8 @@ function sessionNameForSubagent(subagent) {
 function keyForSubagent(subagent) {
     return subagent.subagentId;
 }
-function isLiveSubagentStatus(status) {
-    return ["workspaceCreated", "sessionStarted", "running", "idle", "needsFollowup", "selfReportedComplete", "controllerValidating"].includes(status);
+function hasLiveBackgroundRunnerForSubagent(subagent) {
+    return readPiBackgroundRunnerInventory(subagent.goalId, [subagent]).some((record) => record.subagentId === subagent.subagentId && (record.runnerAlive || record.childAlive));
 }
 function metadataString(metadata, key) {
     const value = metadata?.[key];

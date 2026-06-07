@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "recover-stale-runner-sessions",
+  "generatedAt": "2026-06-07T14:49:27.693215+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "98849f86a76737f538513f7ee61c89e9c40f61f11141104965ecf62e4cdc4360"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "514001b8bac120c154c5b7dca6d5da99780eb11f54a1519a6e5edaaa5c7b04dc"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "399d9dc23754a219ac17148c23f0d1193eaa9967b9b7c63bb34e2a450078712b"
+    }
+  ]
+}

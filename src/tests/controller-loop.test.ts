@@ -329,6 +329,68 @@ test("controller sends stale subagent continuation prompt for stale needs-follow
   assert.equal((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.status, "running");
 });
 
+test("controller replaces stale missing-session subagents instead of prompting a nonexistent session", async () => {
+  const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature", validators: ["npm test"] }]);
+  await runtime.saveGoalDagNode({ ...(await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode), status: "running", updatedAt: now });
+  await runtime.saveGoalSubagent(subagent({
+    status: "running",
+    sessionFile: "/sessions/missing.jsonl",
+    workspacePath: "/repo/.worktrees/build",
+    branch: "feat/build",
+  }));
+  const adapter = new FakeSubagentAdapter();
+  adapter.states.set("subagent-1", {
+    status: "failed",
+    error: "Pi subagent session file not found: /sessions/missing.jsonl",
+    lastActivityAt: "2026-06-02T00:01:00.000Z",
+  });
+
+  const tick = await runtime.runGoalControllerTick("goal-1", { adapter, maxAutoRetries: 2 });
+
+  assert.equal(adapter.prompts.length, 0);
+  assert.equal(tick.started.length, 1);
+  assert.equal(adapter.starts.length, 1);
+  assert.equal(adapter.starts[0]?.subagentId, "subagent-1-retry-1");
+  assert.equal(adapter.starts[0]?.cwd, "/repo/.worktrees/build");
+  assert.equal(adapter.starts[0]?.branch, "feat/build");
+  assert.match(adapter.starts[0]?.initialPrompt ?? "", /STALE_MISSING_SESSION_REPLACEMENT/);
+  assert.match(adapter.starts[0]?.initialPrompt ?? "", /npm test/);
+  assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
+  const stale = await runtime.getGoalSubagent("goal-1", "subagent-1");
+  assert.equal(stale?.status, "failed");
+  assert.equal(stale?.retryCount, 1);
+  assert.match(stale?.integrationStatus ?? "", /stale subagent attempt terminalized/);
+  const replacement = await runtime.getGoalSubagent("goal-1", "subagent-1-retry-1");
+  assert.equal(replacement?.status, "running");
+  assert.equal(replacement?.retryCount, 1);
+  assert.match(replacement?.integrationStatus ?? "", /replacement attempt 1\/2/);
+});
+
+test("controller blocks stale missing-session replacement after retry budget is exhausted", async () => {
+  const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
+  await runtime.saveGoalDagNode({ ...(await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode), status: "failed", updatedAt: now, lastValidationSummary: "missing session" });
+  await runtime.saveGoalSubagent(subagent({
+    status: "failed",
+    sessionFile: "/sessions/missing.jsonl",
+    workspacePath: "/repo/.worktrees/build",
+    branch: "feat/build",
+    integrationStatus: "Pi subagent session file not found: /sessions/missing.jsonl",
+    retryCount: 2,
+  }));
+  const adapter = new FakeSubagentAdapter();
+
+  const tick = await runtime.runGoalControllerTick("goal-1", { adapter, maxAutoRetries: 2 });
+
+  assert.equal(tick.started.length, 0);
+  assert.equal(adapter.starts.length, 0);
+  assert.equal(adapter.prompts.length, 0);
+  assert.equal(tick.blocked.length, 1);
+  assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "blocked");
+  const saved = await runtime.getGoalSubagent("goal-1", "subagent-1");
+  assert.equal(saved?.status, "blocked");
+  assert.match(saved?.integrationStatus ?? "", /stale subagent session could not be recovered/);
+});
+
 test("controller recovers transient failed subagents in the same session", async () => {
   const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
   await runtime.saveGoalDagNode({ ...(await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode), status: "failed", updatedAt: now, lastValidationSummary: "WebSocket error" });
