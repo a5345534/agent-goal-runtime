@@ -770,11 +770,26 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
   const state = await runtime.getGoalOrchestrationState(goalId);
   const terminal = assessPiDagTerminalState(state);
   if (!terminal.terminal) return false;
+  await recordPiControllerEvent(runtime, goalId, "dag.terminal", {
+    allComplete: terminal.allComplete,
+    integrationIssues: terminal.integrationIssues.length,
+  });
 
   const manager = new NativeGitWorkspaceManager({ fetch: false });
   if (terminal.allComplete && terminal.integrationIssues.length === 0) {
+    await recordPiControllerEvent(runtime, goalId, "promotion.started", {
+      controllerBranch: binding.branch,
+      targetRef: binding.promotionTargetRef,
+      workspace: binding.workspace,
+    });
     const promotion = promotePiControllerBranchIfRequired(manager, binding);
     if (!promotion.ok) {
+      await recordPiControllerEvent(runtime, goalId, "promotion.blocked", {
+        summary: promotion.summary,
+        targetRef: binding.promotionTargetRef,
+        controllerBranch: binding.branch,
+        status: promotion.result.status,
+      });
       await runtime.blockGoalFromControllerCloseout(goalId, promotion.summary, {
         promotion: promotion.result,
         targetRef: binding.promotionTargetRef,
@@ -784,12 +799,22 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
       stopPiGoalBackgroundResources(goalId);
       return true;
     }
+    await recordPiControllerEvent(runtime, goalId, "promotion.passed", {
+      summary: promotion.summary,
+      targetRef: binding.promotionTargetRef,
+      controllerBranch: binding.branch,
+      status: promotion.result?.status ?? "not-required",
+    });
   }
 
   const finalization = await runtime.finalizeGoalFromDagTerminalState(goalId);
   if (!finalization.terminal) return false;
 
   if (finalization.changed) {
+    await recordPiControllerEvent(runtime, goalId, "goal.finalized", {
+      status: finalization.status,
+      reason: finalization.reason,
+    });
     stopPiGoalBackgroundResources(goalId);
     if (finalization.status === "complete") {
       const cleanup = cleanupTerminalSubagentWorkspaces(manager, state);
@@ -805,6 +830,10 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
       if (controllerCleanupError) {
         safeNotify(ctx, `Goal ${goalId.slice(0, 8)} completed but controller workspace cleanup failed: ${controllerCleanupError}`, "warning");
       }
+      await recordPiControllerEvent(runtime, goalId, "cleanup.finished", {
+        subagentCleanupErrors: cleanupErrors.length,
+        controllerCleanupError,
+      });
     }
   }
 
@@ -881,6 +910,14 @@ async function prunePiGoalLedgerIfNeeded(runtime: GoalRuntime, goalId: string): 
     await runtime.pruneLedgerEvents(goalId, { maxEvents: LEDGER_MAX_EVENTS_PER_GOAL });
   } catch {
     // Best-effort; must not disrupt controller polling.
+  }
+}
+
+async function recordPiControllerEvent(runtime: GoalRuntime, goalId: string, event: string, details: Record<string, unknown> = {}): Promise<void> {
+  try {
+    await runtime.recordControllerEvent(goalId, { event, ...details });
+  } catch {
+    // Diagnostic only; never disrupt controller polling or closeout.
   }
 }
 
@@ -1206,11 +1243,11 @@ async function pickGoalMonitorAction(runtime: GoalRuntime, ctx: ExtensionCommand
     return undefined;
   }
 
-  let dagSnapshot = await readGoalMonitorDagSnapshot(runtime, goal.goalId);
+  let dagSnapshot = await readGoalMonitorDagSnapshot(runtime, goal);
   return ctx.ui.custom((tui: { requestRender(): void }, theme: { fg(color: string, text: string): string; bold?(text: string): string }, _keybindings: unknown, done: (result: GoalMonitorSelection | undefined) => void) => {
     const controller = new GoalMonitorController(goal, undefined, () => dagSnapshot);
     const refresh = setInterval(() => {
-      void readGoalMonitorDagSnapshot(runtime, goal.goalId)
+      void readGoalMonitorDagSnapshot(runtime, goal)
         .then((snapshot) => {
           dagSnapshot = snapshot;
           tui.requestRender();
@@ -1292,10 +1329,13 @@ async function runGoalMonitorRunnerOperation(
   ctx.ui.notify(`Runner archive complete for ${subagentId}: archived ${result.archived}/${result.matched}, skipped live ${result.skippedLive}.`, "info");
 }
 
-async function readGoalMonitorDagSnapshot(runtime: GoalRuntime, goalId: string): Promise<GoalMonitorDagSnapshot> {
-  const state = await runtime.getGoalOrchestrationState(goalId);
-  const runners = readPiBackgroundRunnerInventory(goalId, state.subagents);
-  return { ...state, runners, refreshedAt: new Date().toISOString() };
+async function readGoalMonitorDagSnapshot(runtime: GoalRuntime, goal: Pick<GoalSummary, "goalId" | "sessionKey">): Promise<GoalMonitorDagSnapshot> {
+  const state = await runtime.getGoalOrchestrationState(goal.goalId);
+  const [ledgerEvents] = await Promise.all([
+    runtime.listLedgerEvents(goal.sessionKey, goal.goalId),
+  ]);
+  const runners = readPiBackgroundRunnerInventory(goal.goalId, state.subagents);
+  return { ...state, runners, ledgerEvents, refreshedAt: new Date().toISOString() };
 }
 
 async function runTargetGoalLifecycleCommand(

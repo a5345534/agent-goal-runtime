@@ -33,6 +33,9 @@ export declare class GoalRuntime {
     }): Promise<GoalToolResult>;
     getGoal(sessionKey: string): Promise<GoalToolResult>;
     listLedgerEvents(sessionKey: string, goalId?: string): Promise<GoalLedgerEvent[]>;
+    recordControllerEvent(goalId: string, details: Record<string, unknown>, options?: {
+        at?: Date | string;
+    }): Promise<void>;
     pruneLedgerEvents(goalId: string, options: {
         maxEvents: number;
     }): Promise<number>;

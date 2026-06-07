@@ -1,4 +1,4 @@
-import type { GoalDagNode, GoalSubagentRecord, GoalSummary } from "../../core/index.js";
+import type { GoalDagNode, GoalLedgerEvent, GoalSubagentRecord, GoalSummary } from "../../core/index.js";
 import type { PiBackgroundRunnerRecord } from "./runner-ops.js";
 import type { GoalListThemeLike } from "./goal-list-ui.js";
 export type GoalMonitorAction = "close" | "pause" | "resume" | "clear" | "openSession";
@@ -26,6 +26,7 @@ export interface GoalMonitorDagSnapshot {
     nodes: GoalDagNode[];
     subagents: GoalSubagentRecord[];
     runners?: PiBackgroundRunnerRecord[];
+    ledgerEvents?: GoalLedgerEvent[];
     refreshedAt?: string;
 }
 export declare class GoalMonitorController {

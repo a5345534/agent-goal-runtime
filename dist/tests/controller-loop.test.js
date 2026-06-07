@@ -62,6 +62,22 @@ test("controller tick starts ready DAG nodes through the subagent adapter", asyn
     assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
     assert.equal((await runtime.getGoalSubagent("goal-1", tick.started[0]?.subagentId ?? ""))?.workspacePath, "/repo/.worktrees/build-feature");
 });
+test("controller tick records durable controller history events when a goal record exists", async () => {
+    const runtime = new GoalRuntime({ store: new MemoryGoalStore(), config: { now: () => new Date(now), randomId: () => "goal-1" } });
+    const created = await runtime.createOrReplaceGoal("s1", "Build feature");
+    assert.ok(created.goal);
+    await runtime.planGoalDag(created.goal.goalId, [{ nodeId: "build", objective: "Build feature" }], { now });
+    const adapter = new FakeSubagentAdapter();
+    await runtime.runGoalControllerTick(created.goal.goalId, {
+        adapter,
+        workspaceAllocator: ({ node }) => ({ subagentId: "subagent-1", cwd: `/repo/.worktrees/${node.slug}`, branch: `feat/${node.slug}` }),
+    });
+    const ledger = await runtime.listLedgerEvents("s1", created.goal.goalId);
+    const controllerEvents = ledger.filter((event) => event.type === "controller_event");
+    assert.deepEqual(controllerEvents.map((event) => event.details?.event), ["poll.started", "node.started", "poll.finished"]);
+    assert.equal(controllerEvents[1]?.details?.nodeId, "build");
+    assert.equal(controllerEvents[1]?.details?.subagentId, "subagent-1");
+});
 test("subagent self-report is held for controller validation when no validator is configured", async () => {
     const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
     await runtime.saveGoalDagNode({ ...await runtime.getGoalDagNode("goal-1", "build"), status: "running", updatedAt: now });

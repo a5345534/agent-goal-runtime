@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "show-controller-history-live-pane",
+  "generatedAt": "2026-06-07T12:58:29.419130+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "891c23effdb7dbd4cef39fbdf75846d123c83faad6c63fb08d633134a008c1b6"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "2aac344548e80ed44006815dd7095c6fdec70b6b9c5607d4206fdfea6145db8b"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "9c0f218a14017c58e32eb126c5ec648da08a92a4df2a89783d7b42698aac3c4a"
+    }
+  ]
+}

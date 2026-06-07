@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import type { GoalDagNode, GoalSubagentRecord, GoalSummary } from "../../core/index.js";
+import type { GoalDagNode, GoalLedgerEvent, GoalSubagentRecord, GoalSummary } from "../../core/index.js";
 import type { PiBackgroundRunnerRecord } from "./runner-ops.js";
 import type { GoalListThemeLike } from "./goal-list-ui.js";
 
@@ -26,6 +26,7 @@ export interface GoalMonitorDagSnapshot {
   nodes: GoalDagNode[];
   subagents: GoalSubagentRecord[];
   runners?: PiBackgroundRunnerRecord[];
+  ledgerEvents?: GoalLedgerEvent[];
   refreshedAt?: string;
 }
 
@@ -304,11 +305,12 @@ export class GoalMonitorController {
     this.scope = scope;
 
     if (scope.kind === "controller") {
+      const historyLines = renderControllerHistoryLines(this.goal, dag, controllerTranscript);
       return {
         scopeLabel: "controller",
-        liveTitle: `Controller execution (${controllerTranscript.entryCount} entries / ${controllerTranscript.messageCount} messages)`,
-        liveLines: controllerTranscript.lines,
-        liveDiagnostic: controllerTranscript.diagnostic,
+        liveTitle: formatControllerLiveTitle(dag, historyLines, controllerTranscript),
+        liveLines: historyLines,
+        liveDiagnostic: historyLines.length > 0 ? undefined : controllerTranscript.diagnostic,
         liveFollowsTail: true,
         listTitle: "Controller",
         listRows: [renderControllerListRow(this.goal, dag)],
@@ -442,7 +444,57 @@ function compareIso(left: string | undefined, right: string | undefined): number
 }
 
 function renderControllerListRow(goal: GoalSummary, dag: GoalMonitorDagSnapshot): string {
-  return `[controller] status=${goal.status}/${goal.activityState ?? "-"} nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} runners=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))}`;
+  return `[controller] status=${goal.status}/${goal.activityState ?? "-"} nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} runners=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))} history=${dag.ledgerEvents?.length ?? 0}`;
+}
+
+function formatControllerLiveTitle(dag: GoalMonitorDagSnapshot, lines: string[], controllerTranscript: GoalTranscriptSnapshot): string {
+  const events = dag.ledgerEvents ?? [];
+  if (events.length > 0) return `Controller history (${events.length} event${events.length === 1 ? "" : "s"})`;
+  if (controllerTranscript.lines.length > 0) return `Controller legacy transcript fallback (${lines.length} line${lines.length === 1 ? "" : "s"})`;
+  return "Controller history (0 events)";
+}
+
+function renderControllerHistoryLines(_goal: GoalSummary, dag: GoalMonitorDagSnapshot, controllerTranscript: GoalTranscriptSnapshot): string[] {
+  const events = dag.ledgerEvents ?? [];
+  if (events.length === 0) return controllerTranscript.lines;
+  return events.map(renderControllerHistoryEvent);
+}
+
+function renderControllerHistoryEvent(event: GoalLedgerEvent): string {
+  const details = event.details ?? {};
+  const eventName = event.type === "controller_event" && typeof details.event === "string" ? details.event : event.type.replace(/_/g, ".");
+  const renderedDetails = formatControllerHistoryDetails(eventName, details);
+  return `[${compactTimestamp(event.at)}] ${eventName.padEnd(24)}${renderedDetails ? ` ${renderedDetails}` : ""}`;
+}
+
+function formatControllerHistoryDetails(eventName: string, details: Record<string, unknown>): string {
+  if (eventName === "goal.created" && typeof details.objective === "string") return shortenMiddle(details.objective, 140);
+  const parts: string[] = [];
+  const append = (label: string, value: unknown, max = 96) => {
+    if (value === undefined || value === null || value === "") return;
+    const text = typeof value === "string" ? value : Array.isArray(value) ? value.join(",") : String(value);
+    if (!text) return;
+    parts.push(`${label}=${shortenMiddle(text.replace(/\s+/g, " ").trim(), max)}`);
+  };
+  append("node", details.nodeId, 56);
+  append("subagent", details.subagentId, 56);
+  append("from", details.from, 32);
+  append("to", details.to, 32);
+  append("status", details.status, 32);
+  append("summary", details.summary, 140);
+  append("reason", details.reason, 140);
+  append("error", details.error, 140);
+  for (const key of ["started", "synced", "validating", "completed", "followups", "blocked", "failed", "ready", "queueBlocked", "nodes", "subagents", "validators", "expectedOutputs", "retry", "maxRetries", "signals", "changed", "allComplete", "integrationIssues", "subagentCleanupErrors"]) {
+    append(key, details[key], 32);
+  }
+  append("branch", details.branch ?? details.controllerBranch, 72);
+  append("target", details.targetRef, 72);
+  append("workspace", details.workspace, 96);
+  append("head", details.head ?? details.sourceHead, 40);
+  append("merge", details.integrationCommitSha, 40);
+  append("model", details.model, 72);
+  append("scenario", details.scenario, 48);
+  return parts.join(" ");
 }
 
 function renderNodeListRow(node: GoalDagNode, subagents: GoalSubagentRecord[], index: number, now: Date): string {

@@ -96,6 +96,7 @@ export type GoalLedgerEventType =
   | "continuation_fatal_failure"
   | "completion_requested"
   | "completion_audit_result"
+  | "controller_event"
   | "goal_completed"
   | "goal_blocked"
   | "goal_budget_limited"

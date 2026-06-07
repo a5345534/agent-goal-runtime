@@ -137,6 +137,13 @@ export class GoalRuntime {
     return this.store.listLedgerEvents(sessionKey, goalId);
   }
 
+  async recordControllerEvent(goalId: string, details: Record<string, unknown>, options: { at?: Date | string } = {}): Promise<void> {
+    const goal = await this.getGoalById(goalId);
+    if (!goal) return;
+    const at = options.at === undefined ? this.config.now() : typeof options.at === "string" ? new Date(options.at) : options.at;
+    await this.appendLedger("controller_event", goal.sessionKey, goalId, details, at);
+  }
+
   async pruneLedgerEvents(goalId: string, options: { maxEvents: number }): Promise<number> {
     return this.store.pruneLedgerEvents?.(goalId, options) ?? 0;
   }

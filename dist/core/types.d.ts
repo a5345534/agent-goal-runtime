@@ -70,7 +70,7 @@ export interface GoalSteeringContextRequest {
     kind: "budget_limit" | "objective_updated";
     renderedPrompt: string;
 }
-export type GoalLedgerEventType = "goal_created" | "goal_replaced" | "goal_edited" | "goal_paused" | "goal_resumed" | "goal_cleared" | "turn_started" | "turn_finished" | "meaningful_progress" | "no_progress_continuation_suppressed" | "continuation_requested" | "continuation_started" | "continuation_already_started" | "continuation_skipped" | "continuation_retryable_failure" | "continuation_fatal_failure" | "completion_requested" | "completion_audit_result" | "goal_completed" | "goal_blocked" | "goal_budget_limited" | "goal_usage_limited";
+export type GoalLedgerEventType = "goal_created" | "goal_replaced" | "goal_edited" | "goal_paused" | "goal_resumed" | "goal_cleared" | "turn_started" | "turn_finished" | "meaningful_progress" | "no_progress_continuation_suppressed" | "continuation_requested" | "continuation_started" | "continuation_already_started" | "continuation_skipped" | "continuation_retryable_failure" | "continuation_fatal_failure" | "completion_requested" | "completion_audit_result" | "controller_event" | "goal_completed" | "goal_blocked" | "goal_budget_limited" | "goal_usage_limited";
 export interface GoalLedgerEvent {
     eventId?: string;
     sessionKey: string;

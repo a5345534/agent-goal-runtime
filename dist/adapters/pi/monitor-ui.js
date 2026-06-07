@@ -245,11 +245,12 @@ export class GoalMonitorController {
             scope = { kind: "nodes" };
         this.scope = scope;
         if (scope.kind === "controller") {
+            const historyLines = renderControllerHistoryLines(this.goal, dag, controllerTranscript);
             return {
                 scopeLabel: "controller",
-                liveTitle: `Controller execution (${controllerTranscript.entryCount} entries / ${controllerTranscript.messageCount} messages)`,
-                liveLines: controllerTranscript.lines,
-                liveDiagnostic: controllerTranscript.diagnostic,
+                liveTitle: formatControllerLiveTitle(dag, historyLines, controllerTranscript),
+                liveLines: historyLines,
+                liveDiagnostic: historyLines.length > 0 ? undefined : controllerTranscript.diagnostic,
                 liveFollowsTail: true,
                 listTitle: "Controller",
                 listRows: [renderControllerListRow(this.goal, dag)],
@@ -378,7 +379,59 @@ function compareIso(left, right) {
     return Date.parse(left ?? "") - Date.parse(right ?? "");
 }
 function renderControllerListRow(goal, dag) {
-    return `[controller] status=${goal.status}/${goal.activityState ?? "-"} nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} runners=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))}`;
+    return `[controller] status=${goal.status}/${goal.activityState ?? "-"} nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} runners=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))} history=${dag.ledgerEvents?.length ?? 0}`;
+}
+function formatControllerLiveTitle(dag, lines, controllerTranscript) {
+    const events = dag.ledgerEvents ?? [];
+    if (events.length > 0)
+        return `Controller history (${events.length} event${events.length === 1 ? "" : "s"})`;
+    if (controllerTranscript.lines.length > 0)
+        return `Controller legacy transcript fallback (${lines.length} line${lines.length === 1 ? "" : "s"})`;
+    return "Controller history (0 events)";
+}
+function renderControllerHistoryLines(_goal, dag, controllerTranscript) {
+    const events = dag.ledgerEvents ?? [];
+    if (events.length === 0)
+        return controllerTranscript.lines;
+    return events.map(renderControllerHistoryEvent);
+}
+function renderControllerHistoryEvent(event) {
+    const details = event.details ?? {};
+    const eventName = event.type === "controller_event" && typeof details.event === "string" ? details.event : event.type.replace(/_/g, ".");
+    const renderedDetails = formatControllerHistoryDetails(eventName, details);
+    return `[${compactTimestamp(event.at)}] ${eventName.padEnd(24)}${renderedDetails ? ` ${renderedDetails}` : ""}`;
+}
+function formatControllerHistoryDetails(eventName, details) {
+    if (eventName === "goal.created" && typeof details.objective === "string")
+        return shortenMiddle(details.objective, 140);
+    const parts = [];
+    const append = (label, value, max = 96) => {
+        if (value === undefined || value === null || value === "")
+            return;
+        const text = typeof value === "string" ? value : Array.isArray(value) ? value.join(",") : String(value);
+        if (!text)
+            return;
+        parts.push(`${label}=${shortenMiddle(text.replace(/\s+/g, " ").trim(), max)}`);
+    };
+    append("node", details.nodeId, 56);
+    append("subagent", details.subagentId, 56);
+    append("from", details.from, 32);
+    append("to", details.to, 32);
+    append("status", details.status, 32);
+    append("summary", details.summary, 140);
+    append("reason", details.reason, 140);
+    append("error", details.error, 140);
+    for (const key of ["started", "synced", "validating", "completed", "followups", "blocked", "failed", "ready", "queueBlocked", "nodes", "subagents", "validators", "expectedOutputs", "retry", "maxRetries", "signals", "changed", "allComplete", "integrationIssues", "subagentCleanupErrors"]) {
+        append(key, details[key], 32);
+    }
+    append("branch", details.branch ?? details.controllerBranch, 72);
+    append("target", details.targetRef, 72);
+    append("workspace", details.workspace, 96);
+    append("head", details.head ?? details.sourceHead, 40);
+    append("merge", details.integrationCommitSha, 40);
+    append("model", details.model, 72);
+    append("scenario", details.scenario, 48);
+    return parts.join(" ");
 }
 function renderNodeListRow(node, subagents, index, now) {
     const latest = latestSubagent(subagents);

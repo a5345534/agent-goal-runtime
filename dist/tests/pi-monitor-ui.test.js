@@ -43,6 +43,16 @@ function dagNode(overrides = {}) {
         ...overrides,
     };
 }
+function ledgerEvent(overrides = {}) {
+    return {
+        sessionKey: "s1",
+        goalId: "abcdef123456",
+        type: "controller_event",
+        at: "2026-05-31T00:04:45.000Z",
+        details: { event: "poll.started" },
+        ...overrides,
+    };
+}
 function subagent(overrides = {}) {
     return {
         goalId: "abcdef123456",
@@ -177,10 +187,44 @@ test("goal monitor starts at controller row with explicit nodeList operation", (
     const rendered = controller.render(140, theme).join("\n");
     assert.match(rendered, /scope=controller focus=list rowOp=nodeList/);
     assert.match(rendered, /DAG nodes=1 \(running=1\) subagents=1 \(running=1\)/);
-    assert.match(rendered, /LIVE: Controller execution \(1 entries \/ 1 messages\)/);
+    assert.match(rendered, /LIVE: Controller legacy transcript fallback \(1 line\)/);
     assert.match(rendered, /controller-tail/);
     assert.match(rendered, /LIST: Controller/);
-    assert.match(rendered, /> \[controller\] status=active\/idle-eligible nodes=1 \(running=1\) runners=1 \(running=1\).*ops: \[nodeList\]/);
+    assert.match(rendered, /> \[controller\] status=active\/idle-eligible nodes=1 \(running=1\) runners=1 \(running=1\) history=0.*ops: \[nodeList\]/);
+});
+test("goal monitor controller live pane renders durable controller history events", () => {
+    const now = new Date("2026-05-31T00:05:00.000Z");
+    const nodes = [dagNode()];
+    const subagents = [subagent()];
+    const controller = new GoalMonitorController(summary("active"), () => ({ lines: ["controller-tail should not be shown when ledger exists"], entryCount: 1, messageCount: 1 }), () => ({
+        nodes,
+        subagents,
+        ledgerEvents: [
+            ledgerEvent({ type: "goal_created", at: "2026-05-31T00:00:00.000Z", details: { objective: "monitor goal" } }),
+            ledgerEvent({
+                at: "2026-05-31T00:04:00.000Z",
+                details: {
+                    event: "validation.failed",
+                    nodeId: "build-node",
+                    subagentId: "subagent-build-node-1",
+                    summary: "missing outputs: dist/app.js",
+                    followup: true,
+                },
+            }),
+            ledgerEvent({
+                at: "2026-05-31T00:04:30.000Z",
+                details: { event: "followup.sent", nodeId: "build-node", subagentId: "subagent-build-node-1", summary: "asked subagent to create dist/app.js" },
+            }),
+        ],
+        refreshedAt: now.toISOString(),
+    }), () => now);
+    const rendered = controller.render(180, theme).join("\n");
+    assert.match(rendered, /LIVE: Controller history \(3 events\)/);
+    assert.match(rendered, /goal\.created\s+monitor goal/);
+    assert.match(rendered, /validation\.failed\s+node=build-node subagent=subagent-build-node-1 summary=missing outputs: dist\/app\.js/);
+    assert.match(rendered, /followup\.sent\s+node=build-node subagent=subagent-build-node-1 summary=asked subagent to create dist\/app\.js/);
+    assert.doesNotMatch(rendered, /controller-tail should not be shown/);
+    assert.match(rendered, /history=3/);
 });
 test("goal monitor enters node list with empty live pane and node row runnerList operation", () => {
     const now = new Date("2026-05-31T00:05:00.000Z");

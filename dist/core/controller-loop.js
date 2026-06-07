@@ -59,6 +59,16 @@ const CONTEXT_FALLBACK_MODELS = {
     "deepseek/deepseek-v4-pro": "deepseek/deepseek-v4-pro", // already largest, no fallback
     "openai-codex/gpt-5.5": "deepseek/deepseek-v4-pro",
 };
+async function recordControllerEvent(runtime, goalId, event, details = {}, at) {
+    if (!runtime.recordControllerEvent)
+        return;
+    try {
+        await runtime.recordControllerEvent(goalId, { event, ...details }, { at });
+    }
+    catch {
+        // Controller history is diagnostic only; never let ledger writes disrupt orchestration.
+    }
+}
 function isTransientError(message) {
     return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
@@ -176,6 +186,11 @@ async function tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state,
         const blockedNode = withNodePatch(node, { status: "blocked", lastValidationSummary: summary, updatedAt: tickStartedAt });
         await runtime.saveGoalSubagent(blockedSubagent);
         await runtime.saveGoalDagNode(blockedNode);
+        await recordControllerEvent(runtime, subagent.goalId, "recovery.blocked", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            reason: summary,
+        }, tickStartedAt);
         result.blocked.push(blockedNode);
         result.synced.push(blockedSubagent);
         return true;
@@ -190,6 +205,11 @@ async function tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state,
             const blockedNode = withNodePatch(node, { status: "blocked", lastValidationSummary: summary, updatedAt: tickStartedAt });
             await runtime.saveGoalSubagent(blockedSubagent);
             await runtime.saveGoalDagNode(blockedNode);
+            await recordControllerEvent(runtime, subagent.goalId, "recovery.blocked", {
+                nodeId: node.nodeId,
+                subagentId: subagent.subagentId,
+                reason: summary,
+            }, tickStartedAt);
             result.blocked.push(blockedNode);
             result.synced.push(blockedSubagent);
             return true;
@@ -221,6 +241,14 @@ async function tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state,
             updatedAt: tickStartedAt,
         }));
         const newSubagent = await runtime.startGoalSubagent(adapter, node, startOptions);
+        await recordControllerEvent(runtime, subagent.goalId, "recovery.started", {
+            nodeId: node.nodeId,
+            subagentId: newSubagent.subagentId,
+            previousSubagentId: subagent.subagentId,
+            fromModel: oldModel,
+            toModel: fallback,
+            reason: errorMessage,
+        }, tickStartedAt);
         result.started.push(newSubagent);
         return true;
     }
@@ -231,6 +259,11 @@ async function tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state,
         const blockedNode = withNodePatch(node, { status: "blocked", lastValidationSummary: summary, updatedAt: tickStartedAt });
         await runtime.saveGoalSubagent(blockedSubagent);
         await runtime.saveGoalDagNode(blockedNode);
+        await recordControllerEvent(runtime, subagent.goalId, "recovery.blocked", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            reason: summary,
+        }, tickStartedAt);
         result.blocked.push(blockedNode);
         result.synced.push(blockedSubagent);
         return true;
@@ -255,6 +288,14 @@ async function tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state,
     const runningNode = withNodePatch(node, { status: "running", lastValidationSummary: status, updatedAt: tickStartedAt });
     await runtime.saveGoalSubagent(runningSubagent);
     await runtime.saveGoalDagNode(runningNode);
+    await recordControllerEvent(runtime, subagent.goalId, "recovery.sent", {
+        nodeId: node.nodeId,
+        subagentId: subagent.subagentId,
+        mode: isTransient ? "transient" : "unhandled-scenario",
+        retry: retryCount + 1,
+        maxRetries,
+        reason: errorMessage,
+    }, tickStartedAt);
     result.followups.push(runningSubagent);
     result.synced.push(runningSubagent);
     return true;
@@ -275,6 +316,10 @@ export async function runGoalControllerTick(runtime, goalId, options) {
         changed: false,
     };
     const initialState = await runtime.getGoalOrchestrationState(goalId);
+    await recordControllerEvent(runtime, goalId, "poll.started", {
+        nodes: initialState.nodes.length,
+        subagents: initialState.subagents.length,
+    }, tickStartedAt);
     await syncSubagents(runtime, options.adapter, initialState, result, options, tickStartedAt);
     await reconcileSubagentOutcomes(runtime, goalId, options, result, tickStartedAt);
     await startReadyNodes(runtime, goalId, options, result, tickStartedAt);
@@ -286,6 +331,18 @@ export async function runGoalControllerTick(runtime, goalId, options) {
             result.followups.length > 0 ||
             result.blocked.length > 0 ||
             result.failed.length > 0;
+    await recordControllerEvent(runtime, goalId, "poll.finished", {
+        changed: result.changed,
+        started: result.started.length,
+        synced: result.synced.length,
+        validating: result.validating.length,
+        completed: result.completed.length,
+        followups: result.followups.length,
+        blocked: result.blocked.length,
+        failed: result.failed.length,
+        ready: result.ready.length,
+        queueBlocked: result.queueBlocked.length,
+    }, tickStartedAt);
     return result;
 }
 export async function runGoalControllerLoop(runtime, goalId, options) {
@@ -313,8 +370,16 @@ async function syncSubagents(runtime, adapter, state, result, options, tickStart
             continue;
         try {
             const updated = await runtime.syncGoalSubagent(adapter, subagent);
-            if (subagentChanged(subagent, updated))
+            if (subagentChanged(subagent, updated)) {
                 result.synced.push(updated);
+                await recordControllerEvent(runtime, updated.goalId, controllerEventForSyncedSubagent(updated), {
+                    nodeId: updated.nodeId,
+                    subagentId: updated.subagentId,
+                    from: subagent.status,
+                    to: updated.status,
+                    summary: updated.selfReportedResult ?? updated.integrationStatus,
+                }, tickStartedAt);
+            }
         }
         catch (error) {
             if (isTransientStoreLockError(error))
@@ -443,6 +508,14 @@ async function tryRecoverBlockedSubagent(runtime, options, state, node, subagent
         const runningNode = withNodePatch(node, { status: "running", lastValidationSummary: summary, updatedAt: tickStartedAt });
         await runtime.saveGoalSubagent(runningSubagent);
         await runtime.saveGoalDagNode(runningNode);
+        await recordControllerEvent(runtime, subagent.goalId, "recovery.sent", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            mode: "blocked-node",
+            retry: retryCount + 1,
+            maxRetries,
+            reason: blockedReason,
+        }, tickStartedAt);
         result.followups.push(runningSubagent);
         result.synced.push(runningSubagent);
         return true;
@@ -456,6 +529,11 @@ async function tryRecoverBlockedSubagent(runtime, options, state, node, subagent
         const blockedNode = withNodePatch(node, { status: "blocked", lastValidationSummary: summary, updatedAt: tickStartedAt });
         await runtime.saveGoalSubagent(blockedSubagent);
         await runtime.saveGoalDagNode(blockedNode);
+        await recordControllerEvent(runtime, subagent.goalId, "recovery.blocked", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            reason: summary,
+        }, tickStartedAt);
         result.blocked.push(blockedNode);
         result.synced.push(blockedSubagent);
         return true;
@@ -466,16 +544,41 @@ async function validateOrHold(runtime, options, state, node, subagent, result, t
     const validatingSubagent = withSubagentPatch(subagent, { status: "controllerValidating" });
     await runtime.saveGoalDagNode(validatingNode);
     await runtime.saveGoalSubagent(validatingSubagent);
+    await recordControllerEvent(runtime, node.goalId, "validation.started", {
+        nodeId: node.nodeId,
+        subagentId: subagent.subagentId,
+        expectedOutputs: node.expectedOutputs.length,
+        validators: node.validators.length,
+    }, tickStartedAt);
     result.validating.push(validatingNode);
-    if (!options.validator)
+    if (!options.validator) {
+        await recordControllerEvent(runtime, node.goalId, "validation.holding", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            reason: "no controller validator configured",
+        }, tickStartedAt);
         return;
+    }
     const validation = await options.validator({ goalId: node.goalId, node: validatingNode, subagent: validatingSubagent, state, tickStartedAt });
     const validationSummary = validation.summary ?? validation.validationSignals?.join("; ");
     const validationResults = appendValidationResults(validatingSubagent, validation);
     if (validation.status === "passed") {
+        await recordControllerEvent(runtime, node.goalId, "validation.passed", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            summary: validationSummary,
+            signals: validation.validationSignals?.length ?? 0,
+        }, tickStartedAt);
         await integrateOrCompleteValidatedSubagent(runtime, options, state, validatingNode, validationResults, result, tickStartedAt, validationSummary, validation.validationSignals);
         return;
     }
+    await recordControllerEvent(runtime, node.goalId, validation.status === "blocked" ? "validation.blocked" : "validation.failed", {
+        nodeId: node.nodeId,
+        subagentId: subagent.subagentId,
+        summary: validationSummary,
+        signals: validation.validationSignals?.length ?? 0,
+        followup: Boolean(validation.followupPrompt),
+    }, tickStartedAt);
     if (validation.status === "blocked") {
         const blockedNode = withNodePatch(validatingNode, { status: "blocked", lastValidationSummary: validationSummary });
         const blockedSubagent = withSubagentPatch(validationResults, { status: "blocked" });
@@ -492,6 +595,12 @@ async function validateOrHold(runtime, options, state, node, subagent, result, t
             const blockedSubagent = withSubagentPatch(validationResults, { status: "blocked", integrationStatus: repeatSummary });
             await runtime.saveGoalDagNode(blockedNode);
             await runtime.saveGoalSubagent(blockedSubagent);
+            await recordControllerEvent(runtime, node.goalId, "validation.followupCapped", {
+                nodeId: node.nodeId,
+                subagentId: subagent.subagentId,
+                summary: repeatSummary,
+                occurrences: repeat.count,
+            }, tickStartedAt);
             result.blocked.push(blockedNode);
             return;
         }
@@ -503,6 +612,11 @@ async function validateOrHold(runtime, options, state, node, subagent, result, t
         const runningNode = withNodePatch(validatingNode, { status: "running", lastValidationSummary: validationSummary });
         await runtime.saveGoalSubagent(runningSubagent);
         await runtime.saveGoalDagNode(runningNode);
+        await recordControllerEvent(runtime, node.goalId, "followup.sent", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            summary: validationSummary,
+        }, tickStartedAt);
         result.followups.push(runningSubagent);
         return;
     }
@@ -510,6 +624,11 @@ async function validateOrHold(runtime, options, state, node, subagent, result, t
     const needsFollowupSubagent = withSubagentPatch(validationResults, { status: "needsFollowup" });
     await runtime.saveGoalDagNode(needsFollowupNode);
     await runtime.saveGoalSubagent(needsFollowupSubagent);
+    await recordControllerEvent(runtime, node.goalId, "followup.needed", {
+        nodeId: node.nodeId,
+        subagentId: subagent.subagentId,
+        summary: validationSummary,
+    }, tickStartedAt);
     result.followups.push(needsFollowupSubagent);
 }
 async function integrateOrCompleteValidatedSubagent(runtime, options, state, node, subagent, result, tickStartedAt, validationSummary, validationSignals) {
@@ -532,6 +651,11 @@ async function integrateOrCompleteValidatedSubagent(runtime, options, state, nod
         });
         await runtime.saveGoalDagNode(blockedNode);
         await runtime.saveGoalSubagent(blockedSubagent);
+        await recordControllerEvent(runtime, node.goalId, "integration.blocked", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            reason: message,
+        }, tickStartedAt);
         result.blocked.push(blockedNode);
         return;
     }
@@ -540,6 +664,12 @@ async function integrateOrCompleteValidatedSubagent(runtime, options, state, nod
         integrationStatus: "integrating subagent branch into controller workspace",
     });
     await runtime.saveGoalSubagent(integratingSubagent);
+    await recordControllerEvent(runtime, node.goalId, "integration.started", {
+        nodeId: node.nodeId,
+        subagentId: subagent.subagentId,
+        branch: subagent.branch,
+        head: subagent.commitSha ?? subagent.integrationSourceHead,
+    }, tickStartedAt);
     const integration = await options.integrator({
         goalId: node.goalId,
         node,
@@ -561,6 +691,14 @@ async function integrateOrCompleteValidatedSubagent(runtime, options, state, nod
         integrationError: integration.error,
     };
     if (integration.status === "complete" || integration.status === "notRequired") {
+        await recordControllerEvent(runtime, node.goalId, "integration.passed", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            status: integration.status,
+            summary: integrationSummary,
+            sourceHead: integration.sourceHead,
+            integrationCommitSha: integration.integrationCommitSha,
+        }, tickStartedAt);
         await completeValidatedSubagent(runtime, node, withSubagentPatch(integratingSubagent, {
             ...integrationPatch,
             integrationState: integration.status === "complete" ? "complete" : "not-required",
@@ -587,6 +725,12 @@ async function integrateOrCompleteValidatedSubagent(runtime, options, state, nod
         const runningNode = withNodePatch(node, { status: "running", lastValidationSummary: appendSummary(validationSummary, `integration follow-up required: ${integrationSummary}`) });
         await runtime.saveGoalSubagent(runningSubagent);
         await runtime.saveGoalDagNode(runningNode);
+        await recordControllerEvent(runtime, node.goalId, "integration.followup", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            summary: integrationSummary,
+            error: integration.error,
+        }, tickStartedAt);
         result.followups.push(runningSubagent);
         return;
     }
@@ -594,6 +738,12 @@ async function integrateOrCompleteValidatedSubagent(runtime, options, state, nod
     const blockedSubagent = withSubagentPatch(failedSubagent, { status: "blocked" });
     await runtime.saveGoalDagNode(blockedNode);
     await runtime.saveGoalSubagent(blockedSubagent);
+    await recordControllerEvent(runtime, node.goalId, integration.status === "blocked" ? "integration.blocked" : "integration.failed", {
+        nodeId: node.nodeId,
+        subagentId: subagent.subagentId,
+        summary: integrationSummary,
+        error: integration.error,
+    }, tickStartedAt);
     result.blocked.push(blockedNode);
 }
 async function completeValidatedSubagent(runtime, node, subagent, result, validationSummary, subagentPatch = {}) {
@@ -601,6 +751,12 @@ async function completeValidatedSubagent(runtime, node, subagent, result, valida
     const completedSubagent = withSubagentPatch(subagent, { ...subagentPatch, status: "complete" });
     await runtime.saveGoalDagNode(completedNode);
     await runtime.saveGoalSubagent(completedSubagent);
+    await recordControllerEvent(runtime, node.goalId, "node.complete", {
+        nodeId: node.nodeId,
+        subagentId: subagent.subagentId,
+        summary: validationSummary,
+        integrationState: completedSubagent.integrationState,
+    }, completedNode.updatedAt);
     result.completed.push(completedNode);
 }
 function appendSummary(left, right) {
@@ -635,6 +791,14 @@ async function startReadyNodes(runtime, goalId, options, result, tickStartedAt) 
             thinkingLevel: node.thinkingLevel,
         };
         const subagent = await runtime.startGoalSubagent(options.adapter, node, startOptions);
+        await recordControllerEvent(runtime, goalId, "node.started", {
+            nodeId: node.nodeId,
+            subagentId: subagent.subagentId,
+            branch: subagent.branch,
+            workspacePath: subagent.workspacePath,
+            model: startOptions.metadata?.modelArg,
+            scenario: startOptions.metadata?.modelScenario,
+        }, tickStartedAt);
         result.started.push(subagent);
         started += 1;
     }
@@ -650,6 +814,20 @@ function latestSubagentPerNode(subagents) {
 }
 function hasNonTerminalSubagentForNode(subagents, nodeId) {
     return subagents.some((subagent) => subagent.nodeId === nodeId && NON_TERMINAL_SUBAGENT_STATUSES.has(subagent.status));
+}
+function controllerEventForSyncedSubagent(subagent) {
+    switch (subagent.status) {
+        case "selfReportedComplete":
+            return "subagent.result";
+        case "blocked":
+            return "subagent.blocked";
+        case "needsFollowup":
+            return "subagent.needsFollowup";
+        case "failed":
+            return "subagent.failed";
+        default:
+            return "subagent.synced";
+    }
 }
 function isTransientStoreLockError(error) {
     const message = error instanceof Error ? error.message : String(error);

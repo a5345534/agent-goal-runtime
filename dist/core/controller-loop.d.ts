@@ -18,6 +18,9 @@ export interface GoalControllerRuntimePort {
         now?: Date | string;
     }): Promise<GoalSubagentRecord>;
     syncGoalSubagent(adapter: HarnessSubagentAdapter, subagent: GoalSubagentRecord): Promise<GoalSubagentRecord>;
+    recordControllerEvent?(goalId: string, details: Record<string, unknown>, options?: {
+        at?: Date | string;
+    }): Promise<void>;
 }
 export interface GoalControllerWorkspaceAllocation {
     subagentId?: string;
