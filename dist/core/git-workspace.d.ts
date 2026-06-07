@@ -27,7 +27,7 @@ export interface NativeGitWorkspaceAllocation {
     baseRef: string;
     slug: string;
     allocationReason: "workspace-and-branch-omitted" | "subagent-dag-node";
-    created: true;
+    created: boolean;
 }
 export interface NativeGitControllerWorkspaceAllocation extends NativeGitWorkspaceAllocation {
     allocationReason: "workspace-and-branch-omitted";
@@ -50,6 +50,10 @@ export interface NativeGitSubagentWorkspaceAllocationRequest {
     nodeObjective?: string;
     /** Optional caller-supplied base ref overriding controller branch/manager defaults. */
     baseRef?: string;
+    /** Optional deterministic worktree directory name under the worktree root. */
+    worktreeSlug?: string;
+    /** Optional exact branch name to create/reuse for this subagent worktree. */
+    branch?: string;
     /** Optional stable subagent id; otherwise generated from goal/node and collision suffix. */
     subagentId?: string;
 }
@@ -137,6 +141,7 @@ export declare class NativeGitWorkspaceManager {
     constructor(options?: NativeGitWorkspaceManagerOptions);
     allocateControllerWorkspace(request: ControllerWorkspaceAllocationRequest): NativeGitControllerWorkspaceAllocation;
     allocateSubagentWorkspace(request: NativeGitSubagentWorkspaceAllocationRequest): NativeGitSubagentWorkspaceAllocation;
+    private ensureBoundSubagentWorkspace;
     cleanupWorkspace(request: NativeGitWorkspaceCleanupRequest): void;
     integrateSubagentBranch(request: NativeGitSubagentBranchIntegrationRequest): NativeGitSubagentBranchIntegrationResult;
     promoteControllerBranch(request: NativeGitControllerBranchPromotionRequest): NativeGitControllerBranchPromotionResult;

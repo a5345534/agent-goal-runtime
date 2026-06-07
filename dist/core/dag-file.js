@@ -74,6 +74,7 @@ export function planGoalDagFromFileDocument(goalId, document, options = {}) {
                 expectedOutputs,
                 validators,
                 workspaceStrategy: node.workspaceStrategy ?? defaultWorkspaceStrategy,
+                workspace: cloneWorkspaceBinding(node.workspace),
                 risk: node.risk,
                 modelScenario,
                 modelArg: selection.model,
@@ -136,6 +137,8 @@ function parseNode(input, path) {
         node.validation = parseValidationContract(input.validation, `${path}.validation`);
     if (input.workspaceStrategy !== undefined)
         node.workspaceStrategy = requireNonEmptyString(input.workspaceStrategy, `${path}.workspaceStrategy`);
+    if (input.workspace !== undefined)
+        node.workspace = parseWorkspaceBinding(input.workspace, `${path}.workspace`);
     if (input.risk !== undefined)
         node.risk = parseRisk(input.risk, `${path}.risk`);
     if (input.completionGates !== undefined)
@@ -145,6 +148,20 @@ function parseNode(input, path) {
     if (input.thinkingLevel !== undefined)
         node.thinkingLevel = requireNonEmptyString(input.thinkingLevel, `${path}.thinkingLevel`);
     return node;
+}
+function parseWorkspaceBinding(input, path) {
+    if (!isRecord(input))
+        throw new Error(`Invalid goal DAG file: ${path} must be an object`);
+    const binding = {};
+    if (input.worktreeSlug !== undefined)
+        binding.worktreeSlug = requireNonEmptyString(input.worktreeSlug, `${path}.worktreeSlug`);
+    if (input.branch !== undefined)
+        binding.branch = requireNonEmptyString(input.branch, `${path}.branch`);
+    if (input.baseRef !== undefined)
+        binding.baseRef = requireNonEmptyString(input.baseRef, `${path}.baseRef`);
+    if (!binding.worktreeSlug && !binding.branch && !binding.baseRef)
+        throw new Error(`Invalid goal DAG file: ${path} must set worktreeSlug, branch, or baseRef`);
+    return binding;
 }
 function parseValidationContract(input, path) {
     if (!isRecord(input))
@@ -302,6 +319,9 @@ function cloneConflictHints(hints) {
         modules: hints.modules ? [...hints.modules] : undefined,
         capabilities: hints.capabilities ? [...hints.capabilities] : undefined,
     };
+}
+function cloneWorkspaceBinding(binding) {
+    return binding ? { ...binding } : undefined;
 }
 function cloneValidationContract(contract) {
     if (!contract)

@@ -28,6 +28,7 @@ export interface GoalDagFileNode {
     kind?: GoalDagNode["kind"];
     validation?: GoalDagValidationContract;
     workspaceStrategy?: string;
+    workspace?: GoalDagNode["workspace"];
     risk?: GoalDagNode["risk"];
     completionGates?: string[];
     modelScenario?: string;

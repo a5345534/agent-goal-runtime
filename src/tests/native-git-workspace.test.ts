@@ -113,6 +113,100 @@ test("native git manager allocates subagent worktrees from a controller branch",
   }
 });
 
+test("native git manager honors deterministic subagent workspace binding", () => {
+  const repo = createRepo();
+  try {
+    const manager = new NativeGitWorkspaceManager({ defaultBaseRef: "main", fetch: false });
+    const allocation = manager.allocateSubagentWorkspace({
+      invocationCwd: repo,
+      goalId: "goal-abcdef12",
+      nodeId: "bound-node",
+      worktreeSlug: "bound-node-worktree",
+      branch: "feat/bound-node-worktree",
+    });
+
+    assert.equal(allocation.slug, "bound-node-worktree");
+    assert.equal(allocation.branch, "feat/bound-node-worktree");
+    assert.equal(allocation.worktreePath, join(repo, ".worktrees", "bound-node-worktree"));
+    assert.equal(allocation.created, true);
+    assert.equal(git(allocation.worktreePath, ["branch", "--show-current"]), "feat/bound-node-worktree");
+
+    const reused = manager.allocateSubagentWorkspace({
+      invocationCwd: repo,
+      goalId: "goal-abcdef12",
+      nodeId: "bound-node",
+      worktreeSlug: "bound-node-worktree",
+      branch: "feat/bound-node-worktree",
+    });
+
+    assert.equal(reused.worktreePath, allocation.worktreePath);
+    assert.equal(reused.created, false);
+
+    manager.cleanupWorkspace({ repoRoot: repo, worktreePath: allocation.worktreePath, branch: allocation.branch, force: true });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("native git manager rejects dirty deterministic subagent workspace reuse", () => {
+  const repo = createRepo();
+  try {
+    const manager = new NativeGitWorkspaceManager({ defaultBaseRef: "main", fetch: false });
+    const allocation = manager.allocateSubagentWorkspace({ invocationCwd: repo, goalId: "goal-abcdef12", nodeId: "bound-node", worktreeSlug: "bound-node-worktree", branch: "feat/bound-node-worktree" });
+    writeFileSync(join(allocation.worktreePath, "dirty.txt"), "dirty\n");
+
+    assert.throws(
+      () => manager.allocateSubagentWorkspace({ invocationCwd: repo, goalId: "goal-abcdef12", nodeId: "bound-node", worktreeSlug: "bound-node-worktree", branch: "feat/bound-node-worktree" }),
+      /uncommitted changes/,
+    );
+
+    rmSync(join(allocation.worktreePath, "dirty.txt"), { force: true });
+    manager.cleanupWorkspace({ repoRoot: repo, worktreePath: allocation.worktreePath, branch: allocation.branch, force: true });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("native git subagent allocator uses DAG node workspace binding", async () => {
+  const repo = createRepo();
+  try {
+    const manager = new NativeGitWorkspaceManager({ defaultBaseRef: "main", fetch: false });
+    const runtime = new GoalRuntime({ store: new MemoryGoalStore(), config: { now: () => new Date("2026-06-02T00:00:00.000Z") } });
+    await runtime.planGoalDag("goal-abcdef12", [{
+      nodeId: "attendance",
+      objective: "Implement attendance",
+      workspace: { worktreeSlug: "attendance-bound", branch: "feat/attendance-bound", baseRef: "main" },
+    }], { now: "2026-06-02T00:00:00.000Z" });
+    const starts: HarnessSubagentStartRequest[] = [];
+    const adapter: HarnessSubagentAdapter = {
+      adapterId: "fake",
+      startSession(request) {
+        starts.push(request);
+        return { sessionId: `session-${request.subagentId}`, status: "running", workspacePath: request.cwd, branch: request.branch };
+      },
+      sendPrompt() {},
+      getSessionState() {
+        return { status: "running" };
+      },
+      abortSession() {},
+    };
+
+    const tick = await runtime.runGoalControllerTick("goal-abcdef12", {
+      adapter,
+      workspaceAllocator: createNativeGitSubagentWorkspaceAllocator(manager, { invocationCwd: repo }),
+    });
+
+    assert.equal(tick.started.length, 1);
+    assert.equal(starts[0]?.cwd, join(repo, ".worktrees", "attendance-bound"));
+    assert.equal(starts[0]?.branch, "feat/attendance-bound");
+    assert.equal(git(starts[0]?.cwd ?? repo, ["branch", "--show-current"]), "feat/attendance-bound");
+
+    manager.cleanupWorkspace({ repoRoot: repo, worktreePath: starts[0]?.cwd ?? "", branch: starts[0]?.branch, force: true });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("native git manager resolves subagent worktree collisions", () => {
   const repo = createRepo();
   try {

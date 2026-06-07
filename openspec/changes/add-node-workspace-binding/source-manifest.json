@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "add-node-workspace-binding",
+  "generatedAt": "2026-06-07T14:09:37.390168+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "105af167064e6ff602c0652cccb99ee6fab7620c5f3c17a44d6decb583beba90"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "8c28dd8a75acc14d8af74f6a2e632828e2cd6e8cba44f6e8404712664ebc8114"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "3f8ad4b0ea590b5f8c6b96737b67dad3684a17866df93d103bcf17d7d2e6ca99"
+    }
+  ]
+}

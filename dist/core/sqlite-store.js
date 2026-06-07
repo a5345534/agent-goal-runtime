@@ -148,10 +148,10 @@ export class SQLiteGoalStore {
         this.db
             .prepare(`INSERT INTO goal_dag_nodes (
           goal_id, node_id, slug, objective, scope, kind, validation_json, dependency_node_ids_json,
-          expected_outputs_json, validators_json, workspace_strategy, risk,
+          expected_outputs_json, validators_json, workspace_strategy, workspace_json, risk,
           model_scenario, model_arg, thinking_level, conflict_hints_json, completion_gates_json, status, last_validation_summary,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, node_id) DO UPDATE SET
           slug = excluded.slug,
           objective = excluded.objective,
@@ -162,6 +162,7 @@ export class SQLiteGoalStore {
           expected_outputs_json = excluded.expected_outputs_json,
           validators_json = excluded.validators_json,
           workspace_strategy = excluded.workspace_strategy,
+          workspace_json = excluded.workspace_json,
           risk = excluded.risk,
           model_scenario = excluded.model_scenario,
           model_arg = excluded.model_arg,
@@ -171,7 +172,7 @@ export class SQLiteGoalStore {
           status = excluded.status,
           last_validation_summary = excluded.last_validation_summary,
           updated_at = excluded.updated_at`)
-            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, node.kind ?? null, node.validation === undefined ? null : JSON.stringify(node.validation), JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.thinkingLevel ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
+            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, node.kind ?? null, node.validation === undefined ? null : JSON.stringify(node.validation), JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.workspace === undefined ? null : JSON.stringify(node.workspace), node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.thinkingLevel ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
     }
     async getGoalDagNode(goalId, nodeId) {
         const row = this.db
@@ -352,6 +353,7 @@ export class SQLiteGoalStore {
         expected_outputs_json TEXT NOT NULL,
         validators_json TEXT NOT NULL,
         workspace_strategy TEXT,
+        workspace_json TEXT,
         risk TEXT,
         model_scenario TEXT,
         model_arg TEXT,
@@ -400,6 +402,7 @@ export class SQLiteGoalStore {
         addColumnIfMissing(this.db, "goal_dag_nodes", "model_scenario", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "model_arg", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "thinking_level", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "workspace_json", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "kind", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "promotion_target_ref", "TEXT");
@@ -532,6 +535,7 @@ function rowToDagNode(row) {
         expectedOutputs: parseStringArray(row.expected_outputs_json),
         validators: parseStringArray(row.validators_json),
         workspaceStrategy: row.workspace_strategy ?? undefined,
+        workspace: parseWorkspaceBinding(row.workspace_json),
         risk: row.risk ?? undefined,
         modelScenario: row.model_scenario ?? undefined,
         modelArg: row.model_arg ?? undefined,
@@ -592,6 +596,17 @@ function parseStringArray(json) {
     }
     catch {
         return [];
+    }
+}
+function parseWorkspaceBinding(json) {
+    if (!json)
+        return undefined;
+    try {
+        const parsed = JSON.parse(json);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
+    }
+    catch {
+        return undefined;
     }
 }
 function parseValidationContract(json) {

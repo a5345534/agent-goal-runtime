@@ -161,6 +161,7 @@ Nodes with no `after` dependencies are immediately schedulable, subject to contr
 | `kind` | no | string | Optional workflow role such as `test-spec`, `test-review`, `implementation`, or `audit`. Runtime treats unknown values as labels but policy may use them. |
 | `validation` | no | object | Optional validation contract metadata: profile, test-spec provenance, artifact locks, required evidence, audit test-gap policy, and generic diff/report settings. |
 | `workspaceStrategy` | no | string | Workspace allocation strategy. Defaults to native Git worktree in Pi. |
+| `workspace` | no | object | Optional deterministic workspace binding hints for adapters. For native-git nodes, `worktreeSlug`, `branch`, and `baseRef` control the subagent worktree/branch the controller creates or reuses. |
 | `risk` | no | `low` / `medium` / `high` | Risk label for scheduling/model-routing/review policy. |
 | `completionGates` | no | string array | Completion gates. Defaults to `controller-validation`. Integration gate names such as `subagent-integration`, `subagent-branch-integration`, `branch-integration`, or `native-git-integration` explicitly require branch integration before completion. |
 | `modelScenario` | no | scenario id | Explicit model-routing scenario for this node. Overrides defaults and rules. |
@@ -205,6 +206,28 @@ For high-risk `kind=implementation` nodes, controller validation fails if the no
 ## Subagent branch integration
 
 For `workspaceStrategy: "native-git-worktree"`, Pi/OpenCode allocate a controller worktree and per-node subagent worktrees/branches. After a subagent reports `SUBAGENT_RESULT:` and controller validation passes, the runtime attempts to integrate the committed subagent branch head into the controller workspace before marking the node `complete`.
+
+`outputs` for native-git nodes are always relative to the subagent workspace root. Do not include `.worktrees/<name>/` in output paths. The runtime rejects native-git DAG nodes that declare `.worktrees/...` outputs because that couples validation to a parent checkout layout and causes the controller to look for nested worktrees.
+
+A node can optionally bind its subagent workspace deterministically:
+
+```json
+{
+  "id": "tw-namespace-architecture",
+  "workspaceStrategy": "native-git-worktree",
+  "workspace": {
+    "worktreeSlug": "65f61476-tw-namespace-architecture",
+    "branch": "refactor/65f61476-tw-namespace-architecture",
+    "baseRef": "goal/goal-6ce-implement-the-approved-tw-reg-lsa-people-frappe-"
+  },
+  "outputs": [
+    "projects/backend/module/people-frappe-module/beyourself_people/reg_lsa/tw",
+    "projects/backend/module/people-frappe-module/tests"
+  ]
+}
+```
+
+When `workspace.worktreeSlug` or `workspace.branch` is present, the native-git allocator creates or reuses that exact subagent worktree/branch, failing closed if an existing worktree is on another branch or dirty. This makes the subagent join a controller-assigned workspace instead of inventing a path.
 
 Integration metadata is stored on the subagent record:
 

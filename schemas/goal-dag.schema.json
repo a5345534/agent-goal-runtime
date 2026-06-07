@@ -26,6 +26,23 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "worktreeSlug": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+        },
+        "branch": { "type": "string", "minLength": 1 },
+        "baseRef": { "type": "string", "minLength": 1 }
+      },
+      "anyOf": [
+        { "required": ["worktreeSlug"] },
+        { "required": ["branch"] },
+        { "required": ["baseRef"] }
+      ]
+    },
     "conflicts": {
       "type": "object",
       "additionalProperties": false,
@@ -156,6 +173,7 @@
         "kind": { "type": "string", "minLength": 1 },
         "validation": { "$ref": "#/$defs/validation" },
         "workspaceStrategy": { "type": "string", "minLength": 1 },
+        "workspace": { "$ref": "#/$defs/workspace" },
         "risk": { "enum": ["low", "medium", "high"] },
         "completionGates": { "$ref": "#/$defs/stringList" },
         "modelScenario": { "$ref": "#/$defs/scenarioId" },

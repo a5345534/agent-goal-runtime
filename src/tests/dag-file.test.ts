@@ -53,6 +53,40 @@ test("goal DAG file parser creates explicit nodes without inferred sequencing", 
   assert.equal(plan.nodeInputs[1]?.risk, "medium");
 });
 
+test("goal DAG file parser accepts node workspace bindings and rejects nested worktree outputs", () => {
+  const document = parseGoalDagFileContent(JSON.stringify({
+    version: 1,
+    objective: "Bound workspace goal",
+    nodes: [{
+      id: "bound-node",
+      objective: "Use bound workspace",
+      workspaceStrategy: "native-git-worktree",
+      workspace: {
+        worktreeSlug: "bound-node-worktree",
+        branch: "feat/bound-node-worktree",
+        baseRef: "main",
+      },
+      outputs: ["src/output.ts"],
+    }],
+  }));
+  const plan = createGoalDagNodesFromFileContent("goal-1", JSON.stringify(document), { now });
+
+  assert.deepEqual(plan.nodes[0]?.workspace, {
+    worktreeSlug: "bound-node-worktree",
+    branch: "feat/bound-node-worktree",
+    baseRef: "main",
+  });
+
+  assert.throws(
+    () => createGoalDagNodesFromFileContent("goal-1", JSON.stringify({
+      version: 1,
+      objective: "Bad outputs",
+      nodes: [{ id: "bad-node", objective: "Bad", workspaceStrategy: "native-git-worktree", outputs: [".worktrees/generated/src/output.ts"] }],
+    }), { now }),
+    /must be relative to the subagent workspace root/,
+  );
+});
+
 test("goal DAG file parser rejects invalid structure before execution", () => {
   assert.throws(() => parseGoalDagFileContent("not-json"), /Invalid goal DAG file JSON/);
   assert.throws(() => parseGoalDagFileContent(JSON.stringify({ version: 2, objective: "x", nodes: [] })), /version must be 1/);

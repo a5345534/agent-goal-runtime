@@ -292,6 +292,15 @@ export interface GoalDagValidationContract {
   auditReportPaths?: string[];
 }
 
+export interface GoalDagNodeWorkspaceBinding {
+  /** Optional deterministic subagent worktree directory name under the adapter's worktree root. */
+  worktreeSlug?: string;
+  /** Optional exact Git branch name to create/reuse for the subagent worktree. */
+  branch?: string;
+  /** Optional base ref for creating the subagent worktree/branch. */
+  baseRef?: string;
+}
+
 export interface GoalDagNode {
   goalId: string;
   nodeId: string;
@@ -304,6 +313,8 @@ export interface GoalDagNode {
   expectedOutputs: string[];
   validators: string[];
   workspaceStrategy?: string;
+  /** Workspace binding hints consumed by adapters that support deterministic node worktrees. */
+  workspace?: GoalDagNodeWorkspaceBinding;
   risk?: "low" | "medium" | "high";
   /** Model-routing scenario selected for this node, resolved by DAG defaults/rules or explicit node config. */
   modelScenario?: string;

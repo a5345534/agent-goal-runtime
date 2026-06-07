@@ -71,7 +71,13 @@ test("SQLite store persists DAG node model scenario and model arg", async () => 
             version: 1,
             objective: "Route models by scenario",
             modelRouting,
-            nodes: [{ id: "docs-node", objective: "Update docs", scope: "docs", risk: "low" }],
+            nodes: [{
+                    id: "docs-node",
+                    objective: "Update docs",
+                    scope: "docs",
+                    risk: "low",
+                    workspace: { worktreeSlug: "docs-worktree", branch: "feat/docs-worktree", baseRef: "main" },
+                }],
         }), { now: "2026-06-02T00:00:00.000Z" });
         await firstRuntime.saveGoalDagNode(plan.nodes[0]);
         firstStore.close();
@@ -80,6 +86,7 @@ test("SQLite store persists DAG node model scenario and model arg", async () => 
         const node = await secondRuntime.getGoalDagNode("goal-1", "docs-node");
         assert.equal(node?.modelScenario, "docs");
         assert.equal(node?.modelArg, "openai/gpt-5-mini");
+        assert.deepEqual(node?.workspace, { worktreeSlug: "docs-worktree", branch: "feat/docs-worktree", baseRef: "main" });
         secondStore.close();
     }
     finally {

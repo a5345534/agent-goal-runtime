@@ -52,10 +52,24 @@ export class NativeGitWorkspaceManager {
         if (this.options.fetch)
             safeGit(repoRoot, ["fetch", this.options.remote, "--prune"]);
         const baseRef = this.resolveSubagentBaseRef(repoRoot, request);
-        const baseSlug = slugForGoalSubagent(request.goalId, request.nodeSlug ?? request.nodeId, request.nodeObjective);
+        const baseSlug = request.worktreeSlug ? assertSafeWorktreeSlug(request.worktreeSlug) : slugForGoalSubagent(request.goalId, request.nodeSlug ?? request.nodeId, request.nodeObjective);
         const baseSubagentId = sanitizeSlug(request.subagentId ?? `subagent-${baseSlug}`);
         const worktreeRoot = this.resolveWorktreeRoot(repoRoot);
         mkdirSync(worktreeRoot, { recursive: true });
+        if (request.worktreeSlug || request.branch) {
+            const branch = request.branch ?? `${this.options.branchPrefix}/${baseSlug}`;
+            assertSafeBranchName(repoRoot, branch);
+            return this.ensureBoundSubagentWorkspace({
+                repoRoot,
+                worktreeRoot,
+                worktreePath: resolve(worktreeRoot, baseSlug),
+                branch,
+                baseRef,
+                slug: baseSlug,
+                nodeId: request.nodeId,
+                subagentId: baseSubagentId,
+            });
+        }
         for (let attempt = 0; attempt < 100; attempt += 1) {
             const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt + 1}`;
             const subagentId = attempt === 0 ? baseSubagentId : `${baseSubagentId}-${attempt + 1}`;
@@ -77,6 +91,51 @@ export class NativeGitWorkspaceManager {
             };
         }
         throw new Error(`cannot allocate unique subagent workspace for DAG node: ${request.nodeId}`);
+    }
+    ensureBoundSubagentWorkspace(request) {
+        const resolvedRoot = resolve(request.worktreeRoot);
+        const resolvedWorktree = resolve(request.worktreePath);
+        if (resolvedWorktree !== resolvedRoot && !resolvedWorktree.startsWith(`${resolvedRoot}/`)) {
+            throw new Error(`bound subagent worktree must stay under worktree root: ${request.worktreePath}`);
+        }
+        if (existsSync(resolvedWorktree)) {
+            const workspaceRepo = findGitRepositoryRoot(resolvedWorktree);
+            if (!workspaceRepo)
+                throw new Error(`bound subagent worktree path exists but is not a Git worktree: ${resolvedWorktree}`);
+            const currentBranch = safeGit(resolvedWorktree, ["branch", "--show-current"]);
+            if (currentBranch !== request.branch) {
+                throw new Error(`bound subagent worktree branch mismatch: expected ${request.branch}, got ${currentBranch || "detached"}`);
+            }
+            const dirty = gitStatusPorcelain(resolvedWorktree);
+            if (dirty)
+                throw new Error(`bound subagent worktree has uncommitted changes; cannot reuse safely:\n${dirty}`);
+            return {
+                repoRoot: request.repoRoot,
+                worktreePath: resolvedWorktree,
+                branch: request.branch,
+                baseRef: request.baseRef,
+                slug: request.slug,
+                nodeId: request.nodeId,
+                subagentId: request.subagentId,
+                allocationReason: "subagent-dag-node",
+                created: false,
+            };
+        }
+        if (gitRefExists(request.repoRoot, request.branch))
+            git(request.repoRoot, ["worktree", "add", resolvedWorktree, request.branch]);
+        else
+            git(request.repoRoot, ["worktree", "add", "-b", request.branch, resolvedWorktree, request.baseRef]);
+        return {
+            repoRoot: request.repoRoot,
+            worktreePath: resolvedWorktree,
+            branch: request.branch,
+            baseRef: request.baseRef,
+            slug: request.slug,
+            nodeId: request.nodeId,
+            subagentId: request.subagentId,
+            allocationReason: "subagent-dag-node",
+            created: true,
+        };
     }
     cleanupWorkspace(request) {
         const repoRoot = request.repoRoot ?? findGitCommonRepositoryRoot(request.worktreePath) ?? findGitRepositoryRoot(request.worktreePath) ?? process.cwd();
@@ -264,7 +323,9 @@ export function createNativeGitSubagentWorkspaceAllocator(manager, options = {})
             invocationCwd: options.invocationCwd,
             repoRoot: options.repoRoot,
             controllerWorkspacePath: options.controllerWorkspacePath,
-            baseRef: options.baseRef,
+            baseRef: request.node.workspace?.baseRef ?? options.baseRef,
+            worktreeSlug: request.node.workspace?.worktreeSlug,
+            branch: request.node.workspace?.branch,
             goalId: request.goalId,
             nodeId: request.node.nodeId,
             nodeSlug: request.node.slug,
@@ -553,6 +614,17 @@ function findGitCommonRepositoryRoot(startPath) {
         return undefined;
     const absoluteCommonDir = isAbsolute(commonDir) ? commonDir : resolve(resolvedStart, commonDir);
     return basename(absoluteCommonDir) === ".git" ? dirname(absoluteCommonDir) : dirname(absoluteCommonDir);
+}
+function assertSafeWorktreeSlug(value) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)) {
+        throw new Error(`bound subagent worktreeSlug must be a safe single path segment: ${value}`);
+    }
+    return value;
+}
+function assertSafeBranchName(repoRoot, branch) {
+    if (!branch || branch.startsWith("-"))
+        throw new Error(`bound subagent branch is not safe: ${branch}`);
+    git(repoRoot, ["check-ref-format", "--branch", branch]);
 }
 export function slugForGoal(goalId, objective) {
     const shortId = sanitizeSlug(goalId).slice(0, 8) || "goal";

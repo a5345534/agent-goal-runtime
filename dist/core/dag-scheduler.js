@@ -20,6 +20,7 @@ export function createGoalDagNodes(goalId, inputs, options = {}) {
             expectedOutputs: [...(input.expectedOutputs ?? [])],
             validators: [...(input.validators ?? [])],
             workspaceStrategy: input.workspaceStrategy ?? options.defaultWorkspaceStrategy,
+            workspace: cloneWorkspaceBinding(input.workspace),
             risk: input.risk,
             modelScenario: input.modelScenario,
             modelArg: input.modelArg,
@@ -46,6 +47,10 @@ export function validateGoalDag(nodes) {
             errors.push(`node ${node.nodeId || "<missing>"} is missing slug`);
         if (!node.objective.trim())
             errors.push(`node ${node.nodeId || "<missing>"} is missing objective`);
+        for (const error of validateNodeWorkspaceBinding(node))
+            errors.push(error);
+        for (const error of validateNodeExpectedOutputs(node))
+            errors.push(error);
         if (ids.has(node.nodeId))
             errors.push(`duplicate node id: ${node.nodeId}`);
         ids.add(node.nodeId);
@@ -233,6 +238,9 @@ function cloneConflictHints(hints) {
         capabilities: hints.capabilities ? [...hints.capabilities] : undefined,
     };
 }
+function cloneWorkspaceBinding(binding) {
+    return binding ? { ...binding } : undefined;
+}
 function cloneValidationContract(contract) {
     if (!contract)
         return undefined;
@@ -242,6 +250,47 @@ function cloneValidationContract(contract) {
         requiredEvidence: contract.requiredEvidence ? [...contract.requiredEvidence] : undefined,
         auditReportPaths: contract.auditReportPaths ? [...contract.auditReportPaths] : undefined,
     };
+}
+function validateNodeWorkspaceBinding(node) {
+    const binding = node.workspace;
+    if (!binding)
+        return [];
+    const errors = [];
+    if (!binding.worktreeSlug && !binding.branch && !binding.baseRef)
+        errors.push(`node ${node.nodeId} workspace binding must set worktreeSlug, branch, or baseRef`);
+    if (binding.worktreeSlug && !SAFE_WORKTREE_SLUG_PATTERN.test(binding.worktreeSlug))
+        errors.push(`node ${node.nodeId} workspace.worktreeSlug must be a safe single path segment`);
+    if (binding.branch && !isSafeGitBranchName(binding.branch))
+        errors.push(`node ${node.nodeId} workspace.branch must be a safe Git branch name`);
+    if (binding.baseRef && /[\0\r\n]/.test(binding.baseRef))
+        errors.push(`node ${node.nodeId} workspace.baseRef must not contain control characters`);
+    return errors;
+}
+function validateNodeExpectedOutputs(node) {
+    if (!node.workspace && !isNativeGitWorktreeStrategy(node.workspaceStrategy))
+        return [];
+    return node.expectedOutputs
+        .filter(isWorktreeRelativeOutputPath)
+        .map((output) => `node ${node.nodeId} expected output ${output} must be relative to the subagent workspace root, not .worktrees/`);
+}
+function isNativeGitWorktreeStrategy(strategy) {
+    return (strategy ?? "").toLowerCase().includes("native-git");
+}
+function isWorktreeRelativeOutputPath(output) {
+    const normalized = output.replace(/\\/g, "/").replace(/^\.\//, "");
+    return normalized === ".worktrees" || normalized.startsWith(".worktrees/");
+}
+const SAFE_WORKTREE_SLUG_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+function isSafeGitBranchName(value) {
+    return Boolean(value) &&
+        !/[\0\r\n\s~^:?*\[\\]/.test(value) &&
+        !value.startsWith("/") &&
+        !value.endsWith("/") &&
+        !value.endsWith(".") &&
+        !value.includes("//") &&
+        !value.includes("..") &&
+        !value.includes("@{") &&
+        value !== "@";
 }
 function sanitizeSlug(value) {
     return value

@@ -169,6 +169,7 @@ function cloneDagNode(node: GoalDagNode): GoalDagNode {
     dependencyNodeIds: [...node.dependencyNodeIds],
     expectedOutputs: [...node.expectedOutputs],
     validators: [...node.validators],
+    workspace: node.workspace ? { ...node.workspace } : undefined,
     conflictHints: node.conflictHints
       ? {
           files: node.conflictHints.files ? [...node.conflictHints.files] : undefined,

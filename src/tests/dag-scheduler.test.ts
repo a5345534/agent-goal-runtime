@@ -56,6 +56,40 @@ test("createGoalDagNodes normalizes inputs and rejects invalid DAGs", () => {
   );
 });
 
+test("createGoalDagNodes persists workspace binding and rejects nested .worktrees outputs", () => {
+  const nodes = createGoalDagNodes(
+    "goal-1",
+    [{
+      nodeId: "build",
+      objective: "Build in a deterministic worktree",
+      workspaceStrategy: "native-git-worktree",
+      workspace: {
+        worktreeSlug: "goal-build-worktree",
+        branch: "feat/goal-build-worktree",
+        baseRef: "main",
+      },
+      expectedOutputs: ["src/output.ts"],
+    }],
+    { now },
+  );
+
+  assert.deepEqual(nodes[0]?.workspace, {
+    worktreeSlug: "goal-build-worktree",
+    branch: "feat/goal-build-worktree",
+    baseRef: "main",
+  });
+
+  assert.throws(
+    () => createGoalDagNodes("goal-1", [{
+      nodeId: "bad-output",
+      objective: "Bad output",
+      workspaceStrategy: "native-git-worktree",
+      expectedOutputs: [".worktrees/other-worktree/src/output.ts"],
+    }], { now }),
+    /must be relative to the subagent workspace root/,
+  );
+});
+
 test("ready queue respects dependency completion before scheduling downstream nodes", () => {
   const state = {
     goalId: "goal-1",

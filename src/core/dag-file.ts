@@ -31,6 +31,7 @@ export interface GoalDagFileNode {
   kind?: GoalDagNode["kind"];
   validation?: GoalDagValidationContract;
   workspaceStrategy?: string;
+  workspace?: GoalDagNode["workspace"];
   risk?: GoalDagNode["risk"];
   completionGates?: string[];
   modelScenario?: string;
@@ -117,6 +118,7 @@ export function planGoalDagFromFileDocument(
         expectedOutputs,
         validators,
         workspaceStrategy: node.workspaceStrategy ?? defaultWorkspaceStrategy,
+        workspace: cloneWorkspaceBinding(node.workspace),
         risk: node.risk,
         modelScenario,
         modelArg: selection.model,
@@ -175,11 +177,22 @@ function parseNode(input: unknown, path: string): GoalDagFileNode {
   if (input.kind !== undefined) node.kind = requireNonEmptyString(input.kind, `${path}.kind`);
   if (input.validation !== undefined) node.validation = parseValidationContract(input.validation, `${path}.validation`);
   if (input.workspaceStrategy !== undefined) node.workspaceStrategy = requireNonEmptyString(input.workspaceStrategy, `${path}.workspaceStrategy`);
+  if (input.workspace !== undefined) node.workspace = parseWorkspaceBinding(input.workspace, `${path}.workspace`);
   if (input.risk !== undefined) node.risk = parseRisk(input.risk, `${path}.risk`);
   if (input.completionGates !== undefined) node.completionGates = parseStringArray(input.completionGates, `${path}.completionGates`);
   if (input.modelScenario !== undefined) node.modelScenario = requireNonEmptyString(input.modelScenario, `${path}.modelScenario`);
   if (input.thinkingLevel !== undefined) node.thinkingLevel = requireNonEmptyString(input.thinkingLevel, `${path}.thinkingLevel`);
   return node;
+}
+
+function parseWorkspaceBinding(input: unknown, path: string): GoalDagNode["workspace"] {
+  if (!isRecord(input)) throw new Error(`Invalid goal DAG file: ${path} must be an object`);
+  const binding: NonNullable<GoalDagNode["workspace"]> = {};
+  if (input.worktreeSlug !== undefined) binding.worktreeSlug = requireNonEmptyString(input.worktreeSlug, `${path}.worktreeSlug`);
+  if (input.branch !== undefined) binding.branch = requireNonEmptyString(input.branch, `${path}.branch`);
+  if (input.baseRef !== undefined) binding.baseRef = requireNonEmptyString(input.baseRef, `${path}.baseRef`);
+  if (!binding.worktreeSlug && !binding.branch && !binding.baseRef) throw new Error(`Invalid goal DAG file: ${path} must set worktreeSlug, branch, or baseRef`);
+  return binding;
 }
 
 function parseValidationContract(input: unknown, path: string): GoalDagValidationContract {
@@ -325,6 +338,10 @@ function cloneConflictHints(hints: GoalDagConflictHints | undefined): GoalDagCon
     modules: hints.modules ? [...hints.modules] : undefined,
     capabilities: hints.capabilities ? [...hints.capabilities] : undefined,
   };
+}
+
+function cloneWorkspaceBinding(binding: GoalDagNode["workspace"]): GoalDagNode["workspace"] {
+  return binding ? { ...binding } : undefined;
 }
 
 function cloneValidationContract(contract: GoalDagValidationContract | undefined): GoalDagValidationContract | undefined {
