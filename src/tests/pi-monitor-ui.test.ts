@@ -279,12 +279,53 @@ test("goal monitor controller live pane renders durable controller history event
 
   const rendered = controller.render(180, theme).join("\n");
 
-  assert.match(rendered, /LIVE: Controller history \(3 events\)/);
+  assert.match(rendered, /LIVE: Controller history compact \(3 lines, 3 raw events\)/);
   assert.match(rendered, /goal\.created\s+monitor goal/);
   assert.match(rendered, /validation\.failed\s+node=build-node subagent=subagent-build-node-1 summary=missing outputs: dist\/app\.js/);
   assert.match(rendered, /followup\.sent\s+node=build-node subagent=subagent-build-node-1 summary=asked subagent to create dist\/app\.js/);
   assert.doesNotMatch(rendered, /controller-tail should not be shown/);
   assert.match(rendered, /history=3/);
+});
+
+test("goal monitor compact controller history hides poll noise and folds repeated blockers", () => {
+  const now = new Date("2026-05-31T00:05:00.000Z");
+  const controller = new GoalMonitorController(
+    summary("active"),
+    () => ({ lines: ["controller-tail should not be shown when ledger exists"], entryCount: 1, messageCount: 1 }),
+    () => ({
+      nodes: [dagNode({ status: "blocked", lastValidationSummary: "Controller validation failed: missing outputs: dist/app.js" })],
+      subagents: [subagent({ status: "blocked", selfReportedResult: "waiting on expected output" })],
+      ledgerEvents: [
+        ledgerEvent({ at: "2026-05-31T00:01:00.000Z", details: { event: "poll.started", nodes: 1, subagents: 1 } }),
+        ledgerEvent({ at: "2026-05-31T00:01:01.000Z", details: { event: "poll.finished", changed: false, ready: 0 } }),
+        ledgerEvent({ at: "2026-05-31T00:02:00.000Z", details: { event: "validation.failed", nodeId: "build-node", subagentId: "subagent-build-node-1", summary: "missing outputs: dist/app.js" } }),
+        ledgerEvent({ at: "2026-05-31T00:02:30.000Z", details: { event: "poll.started", nodes: 1, subagents: 1 } }),
+        ledgerEvent({ at: "2026-05-31T00:02:31.000Z", details: { event: "validation.failed", nodeId: "build-node", subagentId: "subagent-build-node-1", summary: "missing outputs: dist/app.js" } }),
+        ledgerEvent({ at: "2026-05-31T00:03:00.000Z", details: { event: "validation.failed", nodeId: "build-node", subagentId: "subagent-build-node-1", summary: "missing outputs: dist/app.js" } }),
+        ledgerEvent({ at: "2026-05-31T00:03:30.000Z", details: { event: "recovery.blocked", nodeId: "build-node", subagentId: "subagent-build-node-1", reason: "retry limit reached" } }),
+        ledgerEvent({ at: "2026-05-31T00:04:00.000Z", details: { event: "recovery.blocked", nodeId: "build-node", subagentId: "subagent-build-node-1", reason: "retry limit reached" } }),
+      ],
+      refreshedAt: now.toISOString(),
+    }),
+    () => now,
+  );
+
+  const compact = controller.render(200, theme).join("\n");
+
+  assert.match(compact, /LIVE: Controller history compact \(2 lines, 8 raw events\)/);
+  assert.match(compact, /Current blocker: build-node \[blocked\] — Controller validation failed: missing outputs: dist\/app\.js/);
+  assert.match(compact, /validation\.failed ×3\s+node=build-node subagent=subagent-build-node-1 summary=missing outputs: dist\/app\.js/);
+  assert.match(compact, /recovery\.blocked ×2\s+node=build-node subagent=subagent-build-node-1 reason=retry limit reached/);
+  assert.doesNotMatch(compact, /poll\.started/);
+  assert.doesNotMatch(compact, /poll\.finished/);
+
+  controller.handleInput("c");
+  const debug = controller.render(200, theme).join("\n");
+
+  assert.match(debug, /LIVE: Controller history debug \(8 events\)/);
+  assert.match(debug, /poll\.started/);
+  assert.match(debug, /poll\.finished/);
+  assert.doesNotMatch(debug, /validation\.failed ×3/);
 });
 
 test("goal monitor enters node list with empty live pane and node row runnerList operation", () => {

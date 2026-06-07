@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "reduce-controller-live-noise",
+  "generatedAt": "2026-06-07T13:27:08.225680+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "eeb15a9ea3d3031d3a2432b80769370eff96af575947cfae8ea45c1454202e54"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "e0440c7b604e16c6359a76583a7661e6bf74c982a13bd7111d624fff45150886"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "71f4693e4feced3b81e41c2d85be2c7e634d89aee6c99e8214fbb34b9cd9c011"
+    }
+  ]
+}

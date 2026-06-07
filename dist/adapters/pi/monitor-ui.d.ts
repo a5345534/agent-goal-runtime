@@ -40,6 +40,7 @@ export declare class GoalMonitorController {
     private listScroll;
     private liveScroll;
     private followLiveTail;
+    private controllerHistoryMode;
     private rowOperationIndex;
     private lastLiveLineCount;
     private lastListLineCount;

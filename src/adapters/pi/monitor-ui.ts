@@ -34,6 +34,7 @@ const DEFAULT_VISIBLE_LIVE_LINES = 18;
 const DEFAULT_VISIBLE_LIST_LINES = 14;
 
 type GoalMonitorPane = "live" | "list";
+type ControllerHistoryMode = "compact" | "debug";
 type GoalMonitorScope =
   | { kind: "controller" }
   | { kind: "nodes" }
@@ -66,6 +67,7 @@ export class GoalMonitorController {
   private listScroll = 0;
   private liveScroll = 0;
   private followLiveTail = true;
+  private controllerHistoryMode: ControllerHistoryMode = "compact";
   private rowOperationIndex = 0;
   private lastLiveLineCount = 0;
   private lastListLineCount = 0;
@@ -107,6 +109,11 @@ export class GoalMonitorController {
     }
     if (data === "b" || data === "B" || matchesKey(data, Key.backspace)) {
       this.goBack();
+      return undefined;
+    }
+    if (data === "c" || data === "C") {
+      this.controllerHistoryMode = this.controllerHistoryMode === "compact" ? "debug" : "compact";
+      this.followLiveTail = true;
       return undefined;
     }
     if (matchesKey(data, Key.up)) {
@@ -266,7 +273,7 @@ export class GoalMonitorController {
       truncateToWidth(`scope=${view.scopeLabel} focus=${this.activePane} rowOp=${formatPlainOperation(this.lastSelectedOperations[this.rowOperationIndex])} status=${derivedMonitorStatus(this.goal, dag)} tokens=${formatMonitorTokens(this.goal)} elapsed=${formatElapsedSeconds(this.goal.timeUsedSeconds)} controllerModel=${formatMonitorModel(this.goal.controllerModelScenario, this.goal.controllerModelArg)}`, width),
       truncateToWidth(`workspace=${shortenPath(this.goal.executionWorkspace ?? "legacy")} branch=${shortenMiddle(this.goal.branch ?? this.goal.ref ?? "-", 72)}`, width),
       truncateToWidth(`DAG nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} subagents=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))} refreshed=${compactTimestamp(dag.refreshedAt ?? new Date(0).toISOString())}`, width),
-      truncateToWidth(theme.fg("dim", `row-action monitor • ←→ select row op • Enter confirm row op • b/Backspace back • l/v focus • Tab switch • ↑↓ move/scroll • PgUp/PgDn • Esc close`), width),
+      truncateToWidth(theme.fg("dim", `row-action monitor • ←→ select row op • Enter confirm row op • b/Backspace back • l/v focus • c compact/debug • Tab switch • ↑↓ move/scroll • PgUp/PgDn • Esc close`), width),
       truncateToWidth(theme.fg("borderMuted", "─".repeat(Math.max(0, width))), width),
       truncateToWidth(theme.fg(this.activePane === "live" ? "accent" : "muted", `${this.activePane === "live" ? "▶ " : "  "}LIVE: ${view.liveTitle}`), width),
     ];
@@ -305,12 +312,12 @@ export class GoalMonitorController {
     this.scope = scope;
 
     if (scope.kind === "controller") {
-      const historyLines = renderControllerHistoryLines(this.goal, dag, controllerTranscript);
+      const historyLines = renderControllerHistoryLines(this.goal, dag, controllerTranscript, this.controllerHistoryMode);
       return {
         scopeLabel: "controller",
-        liveTitle: formatControllerLiveTitle(dag, historyLines, controllerTranscript),
+        liveTitle: formatControllerLiveTitle(dag, historyLines, controllerTranscript, this.controllerHistoryMode),
         liveLines: historyLines,
-        liveDiagnostic: historyLines.length > 0 ? undefined : controllerTranscript.diagnostic,
+        liveDiagnostic: currentControllerBlockerDiagnostic(this.goal, dag) ?? (historyLines.length > 0 ? undefined : controllerTranscript.diagnostic),
         liveFollowsTail: true,
         listTitle: "Controller",
         listRows: [renderControllerListRow(this.goal, dag)],
@@ -447,24 +454,110 @@ function renderControllerListRow(goal: GoalSummary, dag: GoalMonitorDagSnapshot)
   return `[controller] status=${goal.status}/${goal.activityState ?? "-"} nodes=${formatStatusCounts(dag.nodes.map((node) => node.status))} runners=${formatStatusCounts(dag.subagents.map((subagent) => subagent.status))} history=${dag.ledgerEvents?.length ?? 0}`;
 }
 
-function formatControllerLiveTitle(dag: GoalMonitorDagSnapshot, lines: string[], controllerTranscript: GoalTranscriptSnapshot): string {
+function formatControllerLiveTitle(dag: GoalMonitorDagSnapshot, lines: string[], controllerTranscript: GoalTranscriptSnapshot, mode: ControllerHistoryMode): string {
   const events = dag.ledgerEvents ?? [];
-  if (events.length > 0) return `Controller history (${events.length} event${events.length === 1 ? "" : "s"})`;
+  if (events.length > 0) {
+    if (mode === "debug") return `Controller history debug (${events.length} event${events.length === 1 ? "" : "s"})`;
+    return `Controller history compact (${lines.length} line${lines.length === 1 ? "" : "s"}, ${events.length} raw event${events.length === 1 ? "" : "s"})`;
+  }
   if (controllerTranscript.lines.length > 0) return `Controller legacy transcript fallback (${lines.length} line${lines.length === 1 ? "" : "s"})`;
   return "Controller history (0 events)";
 }
 
-function renderControllerHistoryLines(_goal: GoalSummary, dag: GoalMonitorDagSnapshot, controllerTranscript: GoalTranscriptSnapshot): string[] {
+function renderControllerHistoryLines(_goal: GoalSummary, dag: GoalMonitorDagSnapshot, controllerTranscript: GoalTranscriptSnapshot, mode: ControllerHistoryMode): string[] {
   const events = dag.ledgerEvents ?? [];
   if (events.length === 0) return controllerTranscript.lines;
-  return events.map(renderControllerHistoryEvent);
+  if (mode === "debug") return events.map((event) => renderControllerHistoryEvent(event));
+  return renderCompactControllerHistoryEvents(events);
 }
 
-function renderControllerHistoryEvent(event: GoalLedgerEvent): string {
+interface ControllerHistoryFold {
+  fingerprint: string;
+  event: GoalLedgerEvent;
+  count: number;
+}
+
+function renderCompactControllerHistoryEvents(events: GoalLedgerEvent[]): string[] {
+  const folds: ControllerHistoryFold[] = [];
+  for (const event of events) {
+    const eventName = controllerHistoryEventName(event);
+    const details = event.details ?? {};
+    if (!isCompactControllerHistoryEvent(eventName)) continue;
+    const fingerprint = controllerHistoryFingerprint(eventName, details);
+    const previous = folds[folds.length - 1];
+    if (previous?.fingerprint === fingerprint) {
+      previous.count += 1;
+      previous.event = event;
+      continue;
+    }
+    folds.push({ fingerprint, event, count: 1 });
+  }
+  return folds.map((fold) => renderControllerHistoryEvent(fold.event, fold.count));
+}
+
+function controllerHistoryEventName(event: GoalLedgerEvent): string {
   const details = event.details ?? {};
-  const eventName = event.type === "controller_event" && typeof details.event === "string" ? details.event : event.type.replace(/_/g, ".");
+  return event.type === "controller_event" && typeof details.event === "string" ? details.event : event.type.replace(/_/g, ".");
+}
+
+function isCompactControllerHistoryEvent(eventName: string): boolean {
+  return ![
+    "poll.started",
+    "poll.finished",
+    "subagent.synced",
+    "validation.started",
+    "validation.holding",
+    "recovery.started",
+  ].includes(eventName);
+}
+
+function controllerHistoryFingerprint(eventName: string, details: Record<string, unknown>): string {
+  return JSON.stringify({
+    eventName,
+    nodeId: details.nodeId,
+    subagentId: details.subagentId,
+    from: details.from,
+    to: details.to,
+    status: details.status,
+    summary: normalizeHistoryFingerprintValue(details.summary),
+    reason: normalizeHistoryFingerprintValue(details.reason),
+    error: normalizeHistoryFingerprintValue(details.error),
+    targetRef: details.targetRef,
+    branch: details.branch ?? details.controllerBranch,
+  });
+}
+
+function normalizeHistoryFingerprintValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = typeof value === "string" ? value : Array.isArray(value) ? value.join(",") : String(value);
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized || undefined;
+}
+
+function renderControllerHistoryEvent(event: GoalLedgerEvent, repeatCount = 1): string {
+  const details = event.details ?? {};
+  const eventName = controllerHistoryEventName(event);
+  const label = repeatCount > 1 ? `${eventName} ×${repeatCount}` : eventName;
   const renderedDetails = formatControllerHistoryDetails(eventName, details);
-  return `[${compactTimestamp(event.at)}] ${eventName.padEnd(24)}${renderedDetails ? ` ${renderedDetails}` : ""}`;
+  return `[${compactTimestamp(event.at)}] ${label.padEnd(24)}${renderedDetails ? ` ${renderedDetails}` : ""}`;
+}
+
+function currentControllerBlockerDiagnostic(goal: GoalSummary, dag: GoalMonitorDagSnapshot): string | undefined {
+  const nodesByUpdated = [...dag.nodes].sort((left, right) => compareIso(right.updatedAt, left.updatedAt));
+  const blockedNode = nodesByUpdated.find((node) => ["blocked", "failed"].includes(node.status));
+  if (blockedNode) {
+    const relatedSubagents = dag.subagents.filter((subagent) => subagent.nodeId === blockedNode.nodeId);
+    const latest = latestSubagent(relatedSubagents);
+    const reason = blockedNode.lastValidationSummary ?? latest?.integrationError ?? latest?.integrationStatus ?? latest?.selfReportedResult;
+    return `Current blocker: ${blockedNode.nodeId} [${blockedNode.status}]${reason ? ` — ${shortenMiddle(reason.replace(/\s+/g, " ").trim(), 180)}` : ""}`;
+  }
+  const blockedSubagent = latestSubagent(dag.subagents.filter((subagent) => ["blocked", "failed", "needsFollowup"].includes(subagent.status)));
+  if (blockedSubagent) {
+    const reason = blockedSubagent.integrationError ?? blockedSubagent.integrationStatus ?? blockedSubagent.selfReportedResult;
+    return `Current blocker: ${blockedSubagent.nodeId}/${blockedSubagent.subagentId} [${blockedSubagent.status}]${reason ? ` — ${shortenMiddle(reason.replace(/\s+/g, " ").trim(), 180)}` : ""}`;
+  }
+  if (["blocked", "failed", "budgetLimited", "usageLimited"].includes(goal.status)) return `Current blocker: goal status=${goal.status}`;
+  return undefined;
 }
 
 function formatControllerHistoryDetails(eventName: string, details: Record<string, unknown>): string {
