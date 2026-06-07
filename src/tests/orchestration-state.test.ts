@@ -140,6 +140,66 @@ test("runtime blocks terminal complete DAGs when required subagent integration i
   assert.equal((await runtime.getGoal("session-1")).goal?.status, "blocked");
 });
 
+test("runtime treats worktree-merged-pr as a DAG-level integration gate", async () => {
+  let id = 0;
+  const runtime = new GoalRuntime({
+    store: new MemoryGoalStore(),
+    config: { now: () => new Date(now), randomId: () => (id++ === 0 ? "goal-worktree-merged-pr" : `worktree-event-${id}`) },
+  });
+  await runtime.createOrReplaceGoal("session-1", "Complete portable repository task", { confirmReplace: false });
+  await runtime.saveGoalDagNode(node({
+    goalId: "goal-worktree-merged-pr",
+    status: "complete",
+    workspaceStrategy: undefined,
+    completionGates: ["controller-validation", "worktree-merged-pr"],
+  }));
+  await runtime.saveGoalSubagent(subagent({
+    goalId: "goal-worktree-merged-pr",
+    status: "complete",
+    selfReportedResult: "done",
+    integrationState: "not-required",
+    integrationStatus: "integration not required",
+  }));
+
+  const result = await runtime.finalizeGoalFromDagTerminalState("goal-worktree-merged-pr");
+
+  assert.equal(result.terminal, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason, /required subagent integration incomplete/);
+  assert.equal((await runtime.getGoal("session-1")).goal?.status, "blocked");
+});
+
+test("runtime accepts integrator-confirmed not-required for explicit integration gates", async () => {
+  let id = 0;
+  const runtime = new GoalRuntime({
+    store: new MemoryGoalStore(),
+    config: { now: () => new Date(now), randomId: () => (id++ === 0 ? "goal-integrator-noop" : `noop-event-${id}`) },
+  });
+  await runtime.createOrReplaceGoal("session-1", "Complete portable no-op repository task", { confirmReplace: false });
+  await runtime.saveGoalDagNode(node({
+    goalId: "goal-integrator-noop",
+    status: "complete",
+    workspaceStrategy: undefined,
+    completionGates: ["controller-validation", "worktree-merged-pr"],
+  }));
+  await runtime.saveGoalSubagent(subagent({
+    goalId: "goal-integrator-noop",
+    status: "complete",
+    selfReportedResult: "no repository changes were needed",
+    integrationState: "not-required",
+    integrationStatus: "integrator confirmed no repository changes were required",
+    integrationCompletedAt: now,
+  }));
+
+  const result = await runtime.finalizeGoalFromDagTerminalState("goal-integrator-noop");
+
+  assert.equal(result.terminal, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.status, "complete");
+  assert.equal((await runtime.getGoal("session-1")).goal?.status, "complete");
+});
+
 test("runtime marks an active goal blocked when terminal DAG nodes include failures", async () => {
   let id = 0;
   const runtime = new GoalRuntime({

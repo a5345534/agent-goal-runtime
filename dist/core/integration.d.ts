@@ -1,5 +1,5 @@
 import type { GoalDagNode, GoalOrchestrationState, GoalSubagentRecord } from "./types.js";
-export type GoalSubagentIntegrationGateName = "subagent-integration" | "subagent-branch-integration" | "branch-integration" | "native-git-integration" | "post-merge-validation";
+export type GoalSubagentIntegrationGateName = "subagent-integration" | "subagent-branch-integration" | "branch-integration" | "native-git-integration" | "worktree-merged-pr" | "post-merge-validation";
 export interface RequiredSubagentIntegrationIssue {
     goalId: string;
     nodeId: string;
@@ -19,5 +19,6 @@ export interface RequiredSubagentIntegrationIssue {
  */
 export declare function nodeRequiresSubagentIntegration(node: GoalDagNode, subagent?: GoalSubagentRecord): boolean;
 export declare function subagentIntegrationTerminalSuccess(subagent: GoalSubagentRecord): boolean;
+export declare function requiredSubagentIntegrationTerminalSuccess(subagent: GoalSubagentRecord): boolean;
 export declare function nodeRequiredIntegrationsSatisfied(node: GoalDagNode, subagents: GoalSubagentRecord[]): boolean;
 export declare function findRequiredSubagentIntegrationIssues(state: GoalOrchestrationState): RequiredSubagentIntegrationIssue[];

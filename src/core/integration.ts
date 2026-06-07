@@ -5,6 +5,7 @@ export type GoalSubagentIntegrationGateName =
   | "subagent-branch-integration"
   | "branch-integration"
   | "native-git-integration"
+  | "worktree-merged-pr"
   | "post-merge-validation";
 
 export interface RequiredSubagentIntegrationIssue {
@@ -21,6 +22,7 @@ const INTEGRATION_COMPLETION_GATES = new Set<string>([
   "subagent-branch-integration",
   "branch-integration",
   "native-git-integration",
+  "worktree-merged-pr",
 ]);
 
 /**
@@ -43,9 +45,19 @@ export function subagentIntegrationTerminalSuccess(subagent: GoalSubagentRecord)
   return subagent.integrationState === "complete" || subagent.integrationState === "not-required";
 }
 
+export function requiredSubagentIntegrationTerminalSuccess(subagent: GoalSubagentRecord): boolean {
+  if (subagent.integrationState === "complete") return true;
+  if (subagent.integrationState !== "not-required") return false;
+  // For an explicitly required integration gate, "not-required" is only terminal
+  // success when it came from an integrator decision. The controller's generic
+  // no-gate path can also write "not-required", but that must not satisfy a DAG
+  // contract that explicitly requested branch/worktree integration.
+  return Boolean(subagent.integrationCompletedAt);
+}
+
 export function nodeRequiredIntegrationsSatisfied(node: GoalDagNode, subagents: GoalSubagentRecord[]): boolean {
   const required = subagents.filter((subagent) => subagent.nodeId === node.nodeId && isIntegrationCandidateSubagent(subagent) && nodeRequiresSubagentIntegration(node, subagent));
-  return required.length === 0 || required.every(subagentIntegrationTerminalSuccess);
+  return required.length === 0 || required.every(requiredSubagentIntegrationTerminalSuccess);
 }
 
 export function findRequiredSubagentIntegrationIssues(state: GoalOrchestrationState): RequiredSubagentIntegrationIssue[] {
@@ -55,7 +67,7 @@ export function findRequiredSubagentIntegrationIssues(state: GoalOrchestrationSt
     const node = nodesById.get(subagent.nodeId);
     if (!isIntegrationCandidateSubagent(subagent)) continue;
     if (!node || !nodeRequiresSubagentIntegration(node, subagent)) continue;
-    if (subagentIntegrationTerminalSuccess(subagent)) continue;
+    if (requiredSubagentIntegrationTerminalSuccess(subagent)) continue;
     issues.push({
       goalId: subagent.goalId,
       nodeId: subagent.nodeId,

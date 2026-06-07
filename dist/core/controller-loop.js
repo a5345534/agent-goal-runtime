@@ -1,4 +1,4 @@
-import { nodeRequiresSubagentIntegration, subagentIntegrationTerminalSuccess } from "./integration.js";
+import { nodeRequiresSubagentIntegration, requiredSubagentIntegrationTerminalSuccess } from "./integration.js";
 const SYNCABLE_SUBAGENT_STATUSES = new Set(["sessionStarted", "running", "idle"]);
 const NON_TERMINAL_SUBAGENT_STATUSES = new Set([
     "planned",
@@ -460,7 +460,7 @@ async function integrateOrCompleteValidatedSubagent(runtime, options, state, nod
         await completeValidatedSubagent(runtime, node, subagent, result, validationSummary, { integrationState: "not-required", integrationStatus: "integration not required" });
         return;
     }
-    if (subagentIntegrationTerminalSuccess(subagent)) {
+    if (requiredSubagentIntegrationTerminalSuccess(subagent)) {
         await completeValidatedSubagent(runtime, node, subagent, result, validationSummary);
         return;
     }

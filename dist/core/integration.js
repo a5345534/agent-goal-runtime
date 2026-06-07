@@ -3,6 +3,7 @@ const INTEGRATION_COMPLETION_GATES = new Set([
     "subagent-branch-integration",
     "branch-integration",
     "native-git-integration",
+    "worktree-merged-pr",
 ]);
 /**
  * Returns true when a subagent's output must be integrated into the
@@ -24,9 +25,20 @@ export function nodeRequiresSubagentIntegration(node, subagent) {
 export function subagentIntegrationTerminalSuccess(subagent) {
     return subagent.integrationState === "complete" || subagent.integrationState === "not-required";
 }
+export function requiredSubagentIntegrationTerminalSuccess(subagent) {
+    if (subagent.integrationState === "complete")
+        return true;
+    if (subagent.integrationState !== "not-required")
+        return false;
+    // For an explicitly required integration gate, "not-required" is only terminal
+    // success when it came from an integrator decision. The controller's generic
+    // no-gate path can also write "not-required", but that must not satisfy a DAG
+    // contract that explicitly requested branch/worktree integration.
+    return Boolean(subagent.integrationCompletedAt);
+}
 export function nodeRequiredIntegrationsSatisfied(node, subagents) {
     const required = subagents.filter((subagent) => subagent.nodeId === node.nodeId && isIntegrationCandidateSubagent(subagent) && nodeRequiresSubagentIntegration(node, subagent));
-    return required.length === 0 || required.every(subagentIntegrationTerminalSuccess);
+    return required.length === 0 || required.every(requiredSubagentIntegrationTerminalSuccess);
 }
 export function findRequiredSubagentIntegrationIssues(state) {
     const nodesById = new Map(state.nodes.map((node) => [node.nodeId, node]));
@@ -37,7 +49,7 @@ export function findRequiredSubagentIntegrationIssues(state) {
             continue;
         if (!node || !nodeRequiresSubagentIntegration(node, subagent))
             continue;
-        if (subagentIntegrationTerminalSuccess(subagent))
+        if (requiredSubagentIntegrationTerminalSuccess(subagent))
             continue;
         issues.push({
             goalId: subagent.goalId,

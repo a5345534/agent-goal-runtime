@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "recognize-worktree-merged-pr-integration-gate",
+  "generatedAt": "2026-06-07T09:54:01.211985+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "d534bb3d4408714b17bcaf2483b7d814ffaa8c54e29fc1df5f3af184e207be49"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "a5d1e9f7098a359be9fc3babfbaffd65c321cc347a05bb89cce29624645615d4"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "17008276e4716fb7bde09a369d71ee5737ffafeb596f0a8dc460a06a7dfb7e18"
+    }
+  ]
+}

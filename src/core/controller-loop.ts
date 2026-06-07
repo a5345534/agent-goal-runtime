@@ -1,5 +1,5 @@
 import type { GoalDagSchedulingPolicy } from "./dag-scheduler.js";
-import { nodeRequiresSubagentIntegration, subagentIntegrationTerminalSuccess } from "./integration.js";
+import { nodeRequiresSubagentIntegration, requiredSubagentIntegrationTerminalSuccess } from "./integration.js";
 import type { HarnessSubagentAdapter, StartGoalSubagentOptions } from "./subagent-adapter.js";
 import type { GoalDagNode, GoalOrchestrationState, GoalSubagentRecord } from "./types.js";
 
@@ -687,7 +687,7 @@ async function integrateOrCompleteValidatedSubagent(
     return;
   }
 
-  if (subagentIntegrationTerminalSuccess(subagent)) {
+  if (requiredSubagentIntegrationTerminalSuccess(subagent)) {
     await completeValidatedSubagent(runtime, node, subagent, result, validationSummary);
     return;
   }

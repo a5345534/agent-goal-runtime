@@ -94,6 +94,34 @@ test("controller validator completion unlocks dependent ready nodes in the same 
     assert.equal((await runtime.getGoalDagNode("goal-1", "docs"))?.status, "running");
     assert.deepEqual((await runtime.getGoalSubagent("goal-1", "subagent-1"))?.controllerValidationResults, ["controller tests passed", "npm test"]);
 });
+test("controller treats worktree-merged-pr as an explicit integration gate", async () => {
+    const { runtime } = await runtimeWithPlan([{
+            nodeId: "build",
+            objective: "Build feature",
+            completionGates: ["controller-validation", "worktree-merged-pr"],
+        }]);
+    await runtime.saveGoalDagNode({
+        ...await runtime.getGoalDagNode("goal-1", "build"),
+        workspaceStrategy: undefined,
+        status: "running",
+        updatedAt: now,
+    });
+    await runtime.saveGoalSubagent(subagent({ workspacePath: "/repo/.worktrees/build", branch: "feat/build" }));
+    const adapter = new FakeSubagentAdapter();
+    adapter.states.set("subagent-1", { status: "selfReportedComplete", selfReportedResult: "done", lastActivityAt: "2026-06-02T00:01:00.000Z" });
+    const tick = await runtime.runGoalControllerTick("goal-1", {
+        adapter,
+        validator: () => ({ status: "passed", summary: "controller tests passed", validationSignals: ["npm test"] }),
+    });
+    assert.equal(tick.completed.length, 0);
+    assert.equal(tick.blocked.length, 1);
+    assert.match(tick.blocked[0]?.lastValidationSummary ?? "", /required subagent branch integration cannot run/);
+    assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "blocked");
+    const saved = await runtime.getGoalSubagent("goal-1", "subagent-1");
+    assert.equal(saved?.status, "blocked");
+    assert.equal(saved?.integrationState, "failed");
+    assert.match(saved?.integrationStatus ?? "", /no controller integrator is configured/);
+});
 test("controller validator failure can send a follow-up prompt instead of completing the node", async () => {
     const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
     await runtime.saveGoalDagNode({ ...await runtime.getGoalDagNode("goal-1", "build"), status: "running", updatedAt: now });
