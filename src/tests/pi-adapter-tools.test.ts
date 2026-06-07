@@ -157,6 +157,110 @@ test("Pi orchestrated goal start plans DAG and launches a subagent worktree", as
   }
 });
 
+test("Pi goal start serializes the initial controller tick against recovery polling", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "goal-start-race-"));
+  const workspace = createGitWorkspace();
+  const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
+  const previousPollMs = process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS;
+  process.env.AGENT_GOAL_STATE_HOME = dir;
+  process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = "10000";
+  let commandHandler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+  const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+  const prompts: string[] = [];
+  const launched: Array<{ cwd: string; sessionId?: string; sessionFile?: string; sessionName: string; modelArg?: string }> = [];
+  let subagentLaunchCount = 0;
+  let releaseFirstSubagentLaunch: (() => void) | undefined;
+  const firstSubagentLaunchStarted = new Promise<void>((resolve) => {
+    setPiBackgroundGoalSessionLauncherForTests(async (request) => {
+      launched.push(request);
+      const index = launched.length;
+      const sessionFile = request.sessionFile ?? join(dir, `race-session-${index}.jsonl`);
+      if (request.sessionName.startsWith("subagent ")) {
+        subagentLaunchCount += 1;
+        if (subagentLaunchCount === 1) {
+          resolve();
+          await new Promise<void>((release) => {
+            releaseFirstSubagentLaunch = release;
+          });
+        }
+      }
+      return {
+        sessionFile,
+        sessionId: request.sessionId ?? `race-session-${index}`,
+        setSessionName: async () => undefined,
+        sendPrompt: async (prompt: string) => {
+          prompts.push(prompt);
+        },
+        stop: () => undefined,
+      };
+    });
+  });
+  const pi = {
+    registerTool() {},
+    registerCommand(_name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
+      commandHandler = options.handler;
+    },
+    on(event: string, handler: (...args: unknown[]) => unknown) {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    },
+    appendEntry() {},
+    sendMessage() {},
+  };
+  const controllerCtx = {
+    hasUI: true,
+    cwd: workspace,
+    model: { provider: "test", id: "model" },
+    ui: {
+      notify() {},
+      setStatus() {},
+      setWidget() {},
+      confirm: async () => true,
+      editor: async () => undefined,
+      select: async () => undefined,
+      custom: async () => undefined,
+    },
+    sessionManager: {
+      getSessionFile: () => "/controller/race-session.jsonl",
+      getSessionName: () => "controller",
+    },
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+  };
+
+  try {
+    goalPiExtension(pi as never);
+    assert.ok(commandHandler);
+    const commandPromise = commandHandler?.(`--workspace ${workspace} --branch main Implement orchestrated goal`, controllerCtx as never);
+    await firstSubagentLaunchStarted;
+
+    // A goal-owned background controller session can fire session_start while
+    // the initial /goal command path is still launching the first subagent.
+    // This recovery poll must not start a duplicate runner for the same node.
+    await Promise.all((handlers.get("session_start") ?? []).map((handler) => handler({}, controllerCtx as never)));
+    await delay(50);
+    assert.equal(subagentLaunchCount, 1);
+
+    releaseFirstSubagentLaunch?.();
+    await commandPromise;
+
+    assert.equal(subagentLaunchCount, 1);
+    assert.equal(launched.filter((request) => request.sessionName.startsWith("subagent ")).length, 1);
+    assert.equal(prompts.length, 1);
+    for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
+  } finally {
+    releaseFirstSubagentLaunch?.();
+    setPiBackgroundGoalSessionLauncherForTests();
+    if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;
+    else process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+    if (previousPollMs === undefined) delete process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS;
+    else process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = previousPollMs;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("Pi controller poller finalizes completed subagents and removes completed worktrees", async () => {
   const dir = mkdtempSync(join(tmpdir(), "goal-poller-closeout-"));
   const workspace = createGitWorkspace();

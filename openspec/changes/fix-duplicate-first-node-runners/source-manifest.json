@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "fix-duplicate-first-node-runners",
+  "generatedAt": "2026-06-07T11:38:19.934651+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "d09263b80f6c0930762edeb889721ae1848a8ca8cfedb11d99925890b8c69ce1"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "8884ccace470c5082a56db38db429bcdce8e128fbca89e8fca14237079c2bd25"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "0078e90735246a779ad0039618349b2371e25efe3f490762d19cca7fdeb28b82"
+    }
+  ]
+}

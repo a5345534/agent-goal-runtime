@@ -413,11 +413,15 @@ async function runPiGoalControllerLoopForGoal(runtime, ctx, goal, binding, model
             defaultCompletionGates: ["controller-validation"],
         });
     const loopOptions = buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting);
-    const loop = await runtime.runGoalControllerLoop(goal.goalId, loopOptions);
+    const beforeSubagentCount = (await runtime.listGoalSubagents(goal.goalId)).length;
+    const loop = await runPiGoalControllerLoopWithPollLease(runtime, goal.goalId, loopOptions);
     startPiGoalControllerPollingLoop(runtime, ctx, goal, binding);
+    const afterSubagentCount = (await runtime.listGoalSubagents(goal.goalId)).length;
     return {
         plannedNodeCount: planned.nodes.length,
-        startedSubagentCount: loop.ticks.reduce((count, tick) => count + tick.started.length, 0),
+        startedSubagentCount: loop
+            ? loop.ticks.reduce((count, tick) => count + tick.started.length, 0)
+            : Math.max(0, afterSubagentCount - beforeSubagentCount),
     };
 }
 function getOrCreatePiGoalControllerAdapter(goalId, fallbackModelArg) {
@@ -570,6 +574,21 @@ function releasePiGoalControllerPollLease(lease) {
     }
     catch {
         // Best effort; stale leases expire automatically.
+    }
+}
+async function runPiGoalControllerLoopWithPollLease(runtime, goalId, options) {
+    if (piGoalControllerPollsInFlight.has(goalId))
+        return undefined;
+    const lease = acquirePiGoalControllerPollLease(goalId);
+    if (!lease)
+        return undefined;
+    piGoalControllerPollsInFlight.add(goalId);
+    try {
+        return await runtime.runGoalControllerLoop(goalId, options);
+    }
+    finally {
+        piGoalControllerPollsInFlight.delete(goalId);
+        releasePiGoalControllerPollLease(lease);
     }
 }
 async function runPiGoalControllerPoll(runtime, ctx, goal, binding) {
