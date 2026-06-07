@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GoalMonitorController, readGoalTranscript, readGoalTranscriptLines } from "../adapters/pi/monitor-ui.js";
+import { GoalMonitorController, readControllerTranscript, readGoalTranscript, readGoalTranscriptLines } from "../adapters/pi/monitor-ui.js";
 import type { GoalDagNode, GoalSubagentRecord, GoalSummary } from "../core/index.js";
 
 function summary(status: GoalSummary["status"] = "active", sessionFile?: string): GoalSummary {
@@ -124,6 +124,26 @@ test("goal monitor reads transcript lines without mutating session file", () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("goal monitor treats missing controller transcript as unavailable instead of raw missing-file error", () => {
+  const missingSessionFile = join(tmpdir(), `missing-controller-${Date.now()}.jsonl`);
+  const controller = new GoalMonitorController(
+    summary("active", missingSessionFile),
+    undefined,
+    () => ({ nodes: [dagNode()], subagents: [], refreshedAt: "2026-05-31T00:05:00.000Z" }),
+  );
+
+  const snapshot = readControllerTranscript(missingSessionFile);
+  assert.equal(snapshot.entryCount, 0);
+  assert.match(snapshot.diagnostic ?? "", /Controller transcript unavailable/);
+  assert.doesNotMatch(snapshot.diagnostic ?? "", /Session file not found/);
+  assert.deepEqual(controller.actions, ["pause", "resume", "clear", "close"]);
+
+  const rendered = controller.render(160, theme).join("\n");
+  assert.match(rendered, /Controller transcript unavailable/);
+  assert.doesNotMatch(rendered, /Session file not found/);
+  assert.doesNotMatch(rendered, /openSession/);
 });
 
 test("goal monitor transcript tracks session model, thinking, and assistant tokens", () => {

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "fix-monitor-missing-controller-transcript",
+  "generatedAt": "2026-06-07T07:01:18.745505+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "3eb4e27bba5700faea49a7554885a0c0bfc0f569280ce197e166c62ec9096af9"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "8ddd959fb47fdf9c53c7c6cfd5b90678aec1e7685c1829d9b3736361f89a824d"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "cd41919ad1abc448ff0672f305f463dadf3d511a73ae6f6ee203c74d472e4287"
+    }
+  ]
+}

@@ -18,7 +18,7 @@ export class GoalMonitorController {
     lastListLineCount = 0;
     lastListItems = [];
     lastSelectedOperations = [];
-    constructor(goal, readTranscript = () => readGoalTranscript(this.goal.sessionFile), readDagSnapshot = () => ({ nodes: [], subagents: [] }), now = () => new Date()) {
+    constructor(goal, readTranscript = () => readControllerTranscript(this.goal.sessionFile), readDagSnapshot = () => ({ nodes: [], subagents: [] }), now = () => new Date()) {
         this.goal = goal;
         this.readTranscript = readTranscript;
         this.readDagSnapshot = readDagSnapshot;
@@ -315,7 +315,7 @@ function controllerActions(goal) {
     if (["active", "paused", "blocked", "budgetLimited", "usageLimited"].includes(goal.status))
         actions.push("resume");
     actions.push("clear");
-    if (goal.sessionFile)
+    if (goal.sessionFile && existsSync(goal.sessionFile))
         actions.push("openSession");
     actions.push("close");
     return actions;
@@ -509,6 +509,22 @@ function shortenMiddle(value, maxLength) {
 }
 export function readGoalTranscriptLines(sessionFile) {
     return readGoalTranscript(sessionFile).lines;
+}
+export function readControllerTranscript(sessionFile) {
+    const transcript = readGoalTranscript(sessionFile);
+    if (!sessionFile) {
+        return {
+            ...transcript,
+            diagnostic: "Controller transcript unavailable: this runtime-owned controller has no Pi session file; inspect DAG nodes and runner live panes for active work.",
+        };
+    }
+    if (!existsSync(sessionFile)) {
+        return {
+            ...transcript,
+            diagnostic: "Controller transcript unavailable: Pi did not create a JSONL file for this runtime-owned controller; inspect DAG nodes and runner live panes for active work.",
+        };
+    }
+    return transcript;
 }
 export function readGoalTranscript(sessionFile) {
     if (!sessionFile)

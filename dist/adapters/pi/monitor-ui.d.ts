@@ -63,4 +63,5 @@ export declare class GoalMonitorController {
     private buildView;
 }
 export declare function readGoalTranscriptLines(sessionFile: string | undefined): string[];
+export declare function readControllerTranscript(sessionFile: string | undefined): GoalTranscriptSnapshot;
 export declare function readGoalTranscript(sessionFile: string | undefined): GoalTranscriptSnapshot;
