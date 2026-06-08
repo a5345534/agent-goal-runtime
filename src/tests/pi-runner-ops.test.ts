@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -92,6 +92,33 @@ test("archivePiBackgroundRunnerDirs moves only stopped runner temp dirs", () => 
     assert.ok(result.archiveDir && existsSync(result.archiveDir));
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("archivePiBackgroundRunnerDirs falls back for cross-device archive roots", (t) => {
+  const sourceRoot = mkdtempSync(join(tmpdir(), "pi-runner-archive-cross-source-"));
+  const archiveRoot = mkdtempSync(join(process.cwd(), ".pi-runner-archive-cross-dest-"));
+  try {
+    if (statSync(sourceRoot).dev === statSync(archiveRoot).dev) {
+      t.skip("source and archive roots are on the same device");
+      return;
+    }
+    const stoppedDir = join(sourceRoot, "agent-goal-runtime-bg-stopped");
+    mkdirSync(stoppedDir);
+    writeFileSync(join(stoppedDir, "config.json"), "{}");
+    writeFileSync(join(stoppedDir, "runner.log"), "runner output\n");
+    const records: PiBackgroundRunnerRecord[] = [
+      { runnerDir: stoppedDir, configPath: join(stoppedDir, "config.json"), runnerAlive: false, childAlive: false, subagentId: "subagent-build-node-1" },
+    ];
+
+    const result = archivePiBackgroundRunnerDirs(records, { archiveRoot, now: new Date("2026-05-31T00:00:00.000Z") });
+
+    assert.equal(result.archived, 1);
+    assert.equal(existsSync(stoppedDir), false);
+    assert.ok(result.archiveDir && existsSync(join(result.archiveDir, "agent-goal-runtime-bg-stopped", "runner.log")));
+  } finally {
+    rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(archiveRoot, { recursive: true, force: true });
   }
 });
 

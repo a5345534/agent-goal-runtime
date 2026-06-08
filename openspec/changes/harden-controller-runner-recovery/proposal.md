@@ -21,6 +21,7 @@ The observed operational failures were:
 
 ### New Capabilities
 - Runner inventory preflight and duplicate-runner convergence.
+- Cross-device-safe runner temp dir archiving.
 - Bounded terminated-session replacement recovery.
 - Recovery blocked ledger cooldown.
 
@@ -36,7 +37,7 @@ The observed operational failures were:
 ## Scope
 
 ### In
-- Stop terminal live runners and archive stopped terminal/duplicate temp dirs.
+- Stop terminal live runners and archive stopped terminal/duplicate temp dirs, including `/tmp` to state-root cross-device archives.
 - Keep one live runner per non-terminal subagent.
 - Start one replacement subagent for repeated `terminated` errors after same-session recovery is exhausted.
 - Avoid repeated identical recovery.blocked ledger spam.

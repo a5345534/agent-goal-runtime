@@ -96,7 +96,7 @@ export function archivePiBackgroundRunnerDirs(records, options = {}) {
         try {
             fs.mkdirSync(archiveDir, { recursive: true });
             const destination = path.join(archiveDir, path.basename(record.runnerDir));
-            fs.renameSync(record.runnerDir, destination);
+            moveRunnerDirToArchive(record.runnerDir, destination);
             archived += 1;
             messages.push(`archived ${record.runnerDir} -> ${destination}`);
         }
@@ -108,6 +108,20 @@ export function archivePiBackgroundRunnerDirs(records, options = {}) {
 }
 export function filterPiBackgroundRunnersForSubagent(records, subagentId) {
     return records.filter((record) => record.subagentId === subagentId);
+}
+function moveRunnerDirToArchive(source, destination) {
+    try {
+        fs.renameSync(source, destination);
+    }
+    catch (error) {
+        if (!isCrossDeviceRenameError(error))
+            throw error;
+        fs.cpSync(source, destination, { recursive: true, errorOnExist: true, force: false });
+        fs.rmSync(source, { recursive: true, force: true });
+    }
+}
+function isCrossDeviceRenameError(error) {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "EXDEV";
 }
 function matchSubagent(goalId, subagents, candidate) {
     const goalSubagents = subagents.filter((subagent) => subagent.goalId === goalId);

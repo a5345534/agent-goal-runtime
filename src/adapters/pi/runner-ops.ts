@@ -154,7 +154,7 @@ export function archivePiBackgroundRunnerDirs(
     try {
       fs.mkdirSync(archiveDir, { recursive: true });
       const destination = path.join(archiveDir, path.basename(record.runnerDir));
-      fs.renameSync(record.runnerDir, destination);
+      moveRunnerDirToArchive(record.runnerDir, destination);
       archived += 1;
       messages.push(`archived ${record.runnerDir} -> ${destination}`);
     } catch (error) {
@@ -166,6 +166,20 @@ export function archivePiBackgroundRunnerDirs(
 
 export function filterPiBackgroundRunnersForSubagent(records: PiBackgroundRunnerRecord[], subagentId: string): PiBackgroundRunnerRecord[] {
   return records.filter((record) => record.subagentId === subagentId);
+}
+
+function moveRunnerDirToArchive(source: string, destination: string): void {
+  try {
+    fs.renameSync(source, destination);
+  } catch (error) {
+    if (!isCrossDeviceRenameError(error)) throw error;
+    fs.cpSync(source, destination, { recursive: true, errorOnExist: true, force: false });
+    fs.rmSync(source, { recursive: true, force: true });
+  }
+}
+
+function isCrossDeviceRenameError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "EXDEV";
 }
 
 function matchSubagent(

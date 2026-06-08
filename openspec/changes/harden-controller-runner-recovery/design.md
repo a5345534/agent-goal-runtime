@@ -18,6 +18,7 @@ The controller is deterministic, but Pi subagent execution is mediated by detach
 - Before each Pi controller poll, read background-runner inventory for the goal.
 - If a runner belongs to a terminal subagent (`complete`, `blocked`, `failed`), send SIGTERM and archive stopped dirs.
 - If multiple live runners belong to a non-terminal subagent, keep the newest runner dir and SIGTERM the rest.
+- Archive uses rename when possible and copy/remove fallback for `/tmp` to state-root `EXDEV` moves.
 
 **Rationale**
 - The Pi adapter has access to `/tmp/agent-goal-runtime-bg-*` inventory; the core controller should remain adapter-agnostic.
@@ -70,8 +71,9 @@ The controller is deterministic, but Pi subagent execution is mediated by detach
 
 1. Implement Pi runner preflight and call it before controller poll loops.
 2. Extend core failed-subagent recovery for bounded `terminated` replacement.
-3. Add unit tests for runner preflight and terminated replacement.
-4. Rebuild `dist/` and validate.
+3. Add cross-device archive fallback for runner temp dirs.
+4. Add unit tests for terminated replacement and runner archive fallback.
+5. Rebuild `dist/` and validate.
 
 ## Open Questions
 
