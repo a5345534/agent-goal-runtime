@@ -14,6 +14,7 @@ The observed operational failures were:
 
 - Add Pi controller runner preflight that stops/archive terminal runner temp dirs and stops duplicate live runners for the same durable subagent.
 - Add a bounded replacement path for repeated `terminated` failures after same-session recovery is exhausted.
+- Treat a replacement subagent's successful integration as satisfying the node even when an older same-node attempt remains failed/pending.
 - Suppress repeated identical `recovery.blocked` ledger spam within a short cooldown window.
 - Document validator cwd contract work as an explicit follow-up backlog item.
 
@@ -23,11 +24,13 @@ The observed operational failures were:
 - Runner inventory preflight and duplicate-runner convergence.
 - Cross-device-safe runner temp dir archiving.
 - Bounded terminated-session replacement recovery.
+- Superseded failed-attempt integration gate reconciliation.
 - Recovery blocked ledger cooldown.
 
 ### Modified Capabilities
 - Pi controller poll pre-processing.
 - Core failed-subagent recovery routing.
+- Required subagent integration issue detection.
 
 ## Impact
 

@@ -140,6 +140,47 @@ test("runtime blocks terminal complete DAGs when required subagent integration i
   assert.equal((await runtime.getGoal("session-1")).goal?.status, "blocked");
 });
 
+test("runtime ignores superseded failed attempts when a replacement satisfies required integration", async () => {
+  let id = 0;
+  const runtime = new GoalRuntime({
+    store: new MemoryGoalStore(),
+    config: { now: () => new Date(now), randomId: () => (id++ === 0 ? "goal-replacement-integrated" : `replacement-event-${id}`) },
+  });
+  await runtime.createOrReplaceGoal("session-1", "Complete replacement attempt", { confirmReplace: false });
+  await runtime.saveGoalDagNode(node({ goalId: "goal-replacement-integrated", status: "complete" }));
+  await runtime.saveGoalSubagent(subagent({
+    goalId: "goal-replacement-integrated",
+    subagentId: "subagent-old-failed",
+    status: "failed",
+    integrationState: "pending",
+    integrationStatus: "terminated",
+    retryCount: 2,
+    createdAt: "2026-06-02T00:00:00.000Z",
+    updatedAt: "2026-06-02T00:01:00.000Z",
+  }));
+  await runtime.saveGoalSubagent(subagent({
+    goalId: "goal-replacement-integrated",
+    subagentId: "subagent-replacement",
+    sessionId: "session-replacement",
+    sessionFile: "/sessions/session-replacement.jsonl",
+    status: "complete",
+    selfReportedResult: "replacement completed and integrated",
+    integrationState: "complete",
+    integrationStatus: "merged replacement branch into controller",
+    integrationSourceHead: "a".repeat(40),
+    integrationCommitSha: "b".repeat(40),
+    createdAt: "2026-06-02T00:02:00.000Z",
+    updatedAt: "2026-06-02T00:03:00.000Z",
+  }));
+
+  const result = await runtime.finalizeGoalFromDagTerminalState("goal-replacement-integrated");
+
+  assert.equal(result.terminal, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.status, "complete");
+  assert.equal((await runtime.getGoal("session-1")).goal?.status, "complete");
+});
+
 test("runtime treats worktree-merged-pr as a DAG-level integration gate", async () => {
   let id = 0;
   const runtime = new GoalRuntime({

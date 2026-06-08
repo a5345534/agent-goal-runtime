@@ -6,6 +6,7 @@
 - [x] Add Pi runner inventory preflight for terminal/duplicate runners.
 - [x] Add cross-device-safe runner archive fallback.
 - [x] Add bounded replacement recovery for repeated `terminated` errors.
+- [x] Reconcile superseded failed attempts during required integration closeout.
 - [x] Add cooldown for repeated identical `recovery.blocked` ledger events.
 - [x] Rebuild committed `dist/`.
 

@@ -37,30 +37,30 @@ export function requiredSubagentIntegrationTerminalSuccess(subagent) {
     return Boolean(subagent.integrationCompletedAt);
 }
 export function nodeRequiredIntegrationsSatisfied(node, subagents) {
-    const required = subagents.filter((subagent) => subagent.nodeId === node.nodeId && isIntegrationCandidateSubagent(subagent) && nodeRequiresSubagentIntegration(node, subagent));
-    return required.length === 0 || required.every(requiredSubagentIntegrationTerminalSuccess);
+    const required = requiredIntegrationCandidateSubagents(node, subagents);
+    return required.length === 0 || required.some(requiredSubagentIntegrationTerminalSuccess);
 }
 export function findRequiredSubagentIntegrationIssues(state) {
-    const nodesById = new Map(state.nodes.map((node) => [node.nodeId, node]));
     const issues = [];
-    for (const subagent of state.subagents) {
-        const node = nodesById.get(subagent.nodeId);
-        if (!isIntegrationCandidateSubagent(subagent))
+    for (const node of state.nodes) {
+        const required = requiredIntegrationCandidateSubagents(node, state.subagents);
+        if (required.length === 0 || required.some(requiredSubagentIntegrationTerminalSuccess))
             continue;
-        if (!node || !nodeRequiresSubagentIntegration(node, subagent))
-            continue;
-        if (requiredSubagentIntegrationTerminalSuccess(subagent))
-            continue;
-        issues.push({
-            goalId: subagent.goalId,
-            nodeId: subagent.nodeId,
-            subagentId: subagent.subagentId,
-            reason: requiredIntegrationIssueReason(subagent),
-            integrationState: subagent.integrationState,
-            integrationStatus: subagent.integrationStatus,
-        });
+        for (const subagent of required) {
+            issues.push({
+                goalId: subagent.goalId,
+                nodeId: subagent.nodeId,
+                subagentId: subagent.subagentId,
+                reason: requiredIntegrationIssueReason(subagent),
+                integrationState: subagent.integrationState,
+                integrationStatus: subagent.integrationStatus,
+            });
+        }
     }
     return issues;
+}
+function requiredIntegrationCandidateSubagents(node, subagents) {
+    return subagents.filter((subagent) => subagent.nodeId === node.nodeId && isIntegrationCandidateSubagent(subagent) && nodeRequiresSubagentIntegration(node, subagent));
 }
 function requiredIntegrationIssueReason(subagent) {
     if (!subagent.integrationState)

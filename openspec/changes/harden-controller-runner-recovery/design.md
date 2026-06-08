@@ -8,6 +8,7 @@ The controller is deterministic, but Pi subagent execution is mediated by detach
 - Prevent terminal subagents from continuing to mutate transcripts/workspaces.
 - Prevent duplicate live runners for the same subagent from racing.
 - Preserve same-session recovery first, but start one fresh replacement session after repeated `terminated` errors exhaust same-session retries.
+- Ensure a successful replacement attempt supersedes older same-node failed attempts for required integration closeout.
 - Reduce repeated identical recovery.blocked ledger spam.
 
 ## Decisions
@@ -42,7 +43,17 @@ The controller is deterministic, but Pi subagent execution is mediated by detach
 **Alternative rejected**
 - Immediately replace every `terminated` error. That would discard resumable sessions too eagerly.
 
-### D3. Recovery blocked ledger entries use a cooldown
+### D3. Replacement success supersedes older same-node integration failures
+
+**Choice**
+- Required integration checks are evaluated per node.
+- If any required integration candidate for a node has terminal-success integration state, older same-node failed/pending attempts do not block goal closeout.
+
+**Rationale**
+- Retry/replacement attempts are alternate attempts for the same DAG node, not independent required deliverables.
+- Durable old attempts remain auditable in subagent history, but should not block a node that completed through a later replacement.
+
+### D4. Recovery blocked ledger entries use a cooldown
 
 **Choice**
 - Keep state unchanged, but suppress repeated identical `recovery.blocked` ledger events for the same goal/node/subagent/reason within a short cooldown.
@@ -53,7 +64,7 @@ The controller is deterministic, but Pi subagent execution is mediated by detach
 **Alternative rejected**
 - Stop polling blocked active goals entirely. Active goals should keep best-effort recovery opportunities visible.
 
-### D4. Validator cwd contract remains a follow-up
+### D5. Validator cwd contract remains a follow-up
 
 **Choice**
 - Record branch-sensitive validator cwd as a follow-up change rather than ad hoc hidden behavior.
@@ -72,8 +83,9 @@ The controller is deterministic, but Pi subagent execution is mediated by detach
 1. Implement Pi runner preflight and call it before controller poll loops.
 2. Extend core failed-subagent recovery for bounded `terminated` replacement.
 3. Add cross-device archive fallback for runner temp dirs.
-4. Add unit tests for terminated replacement and runner archive fallback.
-5. Rebuild `dist/` and validate.
+4. Reconcile superseded failed attempts in integration closeout.
+5. Add unit tests for terminated replacement, runner archive fallback, and replacement integration closeout.
+6. Rebuild `dist/` and validate.
 
 ## Open Questions
 

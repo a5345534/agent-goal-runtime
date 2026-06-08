@@ -1,22 +1,22 @@
 {
   "schemaVersion": "1.0",
   "changeName": "harden-controller-runner-recovery",
-  "generatedAt": "2026-06-08T14:23:04.874552+00:00",
+  "generatedAt": "2026-06-08T14:25:46.007886+00:00",
   "sources": [
     {
       "path": "proposal.md",
       "kind": "proposal",
-      "sha256": "3cb2f900312d6a35e285655522bfaed97e3bf0c6e5a535be07f8cc88e74319b1"
+      "sha256": "02644f7e919f3f078be958afad9d9c46dd84088c71a55d452eb7247f519bb8f0"
     },
     {
       "path": "design.md",
       "kind": "design",
-      "sha256": "337710211e832afbe332e31b623b4490a2d985c4b7d792502d61af1b28abc140"
+      "sha256": "439a3370f35700f1154a5a217e99750aa142296a3a00af17db5e9396809fa8fe"
     },
     {
       "path": "tasks.md",
       "kind": "tasks",
-      "sha256": "4ec383e2dc3e26544e9f0b87bb08ca75e4759b984ad42a39f8e4ad6c002f9451"
+      "sha256": "40e8cc97feb3cb381f980991b8e5c58b839fba6f6132b0d2f2afc5a95e363eba"
     }
   ]
 }
