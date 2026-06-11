@@ -170,6 +170,9 @@ function cloneDagNode(node: GoalDagNode): GoalDagNode {
     expectedOutputs: [...node.expectedOutputs],
     validators: [...node.validators],
     workspace: node.workspace ? { ...node.workspace } : undefined,
+    preparedResources: node.preparedResources ? cloneJson(node.preparedResources) : undefined,
+    lastAdapterObservation: node.lastAdapterObservation ? cloneJson(node.lastAdapterObservation) : undefined,
+    lastRecoveryDecision: node.lastRecoveryDecision ? cloneJson(node.lastRecoveryDecision) : undefined,
     conflictHints: node.conflictHints
       ? {
           files: node.conflictHints.files ? [...node.conflictHints.files] : undefined,
@@ -186,7 +189,13 @@ function cloneSubagent(subagent: GoalSubagentRecord): GoalSubagentRecord {
     ...subagent,
     prompts: [...subagent.prompts],
     controllerValidationResults: subagent.controllerValidationResults ? [...subagent.controllerValidationResults] : undefined,
+    lastAdapterObservation: subagent.lastAdapterObservation ? cloneJson(subagent.lastAdapterObservation) : undefined,
+    lastRecoveryDecision: subagent.lastRecoveryDecision ? cloneJson(subagent.lastRecoveryDecision) : undefined,
   };
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function goalToSummary(goal: GoalRecord, metadata: GoalSessionMetadata | undefined): GoalSummary {

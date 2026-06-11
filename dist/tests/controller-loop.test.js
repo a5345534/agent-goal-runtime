@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GoalRuntime, MemoryGoalStore, } from "../core/index.js";
+import { GoalRuntime, MemoryGoalStore, createDefaultControllerExceptionHandler, } from "../core/index.js";
 const now = "2026-06-02T00:00:00.000Z";
 class FakeSubagentAdapter {
     adapterId = "fake";
@@ -61,6 +61,28 @@ test("controller tick starts ready DAG nodes through the subagent adapter", asyn
     assert.match(adapter.starts[0]?.initialPrompt ?? "", /Build feature/);
     assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
     assert.equal((await runtime.getGoalSubagent("goal-1", tick.started[0]?.subagentId ?? ""))?.workspacePath, "/repo/.worktrees/build-feature");
+});
+test("controller tick durably records lifecycle phases before adapter start", async () => {
+    const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
+    const adapter = new FakeSubagentAdapter();
+    const phases = [];
+    const originalSave = runtime.saveGoalDagNode.bind(runtime);
+    runtime.saveGoalDagNode = async (saved) => {
+        phases.push(saved.lifecyclePhase);
+        await originalSave(saved);
+    };
+    await runtime.runGoalControllerTick("goal-1", {
+        adapter,
+        workspaceAllocator: ({ node }) => ({ subagentId: "subagent-1", cwd: `/repo/.worktrees/${node.slug}`, branch: `feat/${node.slug}` }),
+    });
+    assert.deepEqual(phases.filter(Boolean).slice(0, 4), [
+        "acceptanceDefined",
+        "resourcesCreating",
+        "resourcesReady",
+        "runnerStarting",
+    ]);
+    assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.lifecyclePhase, "runnerActive");
+    assert.equal(adapter.starts[0]?.preparedResources?.workspacePath, "/repo/.worktrees/build-feature");
 });
 test("controller tick records durable controller history events when a goal record exists", async () => {
     const runtime = new GoalRuntime({ store: new MemoryGoalStore(), config: { now: () => new Date(now), randomId: () => "goal-1" } });
@@ -308,6 +330,56 @@ test("controller replaces stale missing-session subagents instead of prompting a
     assert.equal(replacement?.status, "running");
     assert.equal(replacement?.retryCount, 1);
     assert.match(replacement?.integrationStatus ?? "", /replacement attempt 1\/2/);
+});
+test("exception-handler same-node recovery reuses prepared resources without allocator duplication", async () => {
+    const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature", validators: ["npm test"] }]);
+    await runtime.saveGoalDagNode({
+        ...await runtime.getGoalDagNode("goal-1", "build"),
+        status: "running",
+        lifecyclePhase: "runnerActive",
+        preparedResources: {
+            subagentId: "subagent-1",
+            adapterId: "fake",
+            workspacePath: "/repo/.worktrees/build",
+            branch: "feat/build",
+            sessionId: "session-subagent-1",
+            sessionFile: "/sessions/missing.jsonl",
+            createdAt: now,
+            updatedAt: now,
+        },
+        updatedAt: now,
+    });
+    await runtime.saveGoalSubagent(subagent({
+        status: "running",
+        sessionFile: "/sessions/missing.jsonl",
+        workspacePath: "/repo/.worktrees/build",
+        branch: "feat/build",
+    }));
+    const adapter = new FakeSubagentAdapter();
+    adapter.states.set("subagent-1", {
+        status: "failed",
+        error: "Pi subagent session file not found: /sessions/missing.jsonl",
+        lastActivityAt: "2026-06-02T00:01:00.000Z",
+    });
+    let allocationCalls = 0;
+    const tick = await runtime.runGoalControllerTick("goal-1", {
+        adapter,
+        maxAutoRetries: 2,
+        exceptionHandler: createDefaultControllerExceptionHandler({ now: () => new Date(now) }),
+        workspaceAllocator: () => {
+            allocationCalls += 1;
+            return { cwd: "/repo/.worktrees/duplicate", branch: "feat/duplicate" };
+        },
+    });
+    assert.equal(allocationCalls, 0);
+    assert.equal(tick.started.length, 1);
+    assert.equal(adapter.starts[0]?.cwd, "/repo/.worktrees/build");
+    assert.equal(adapter.starts[0]?.branch, "feat/build");
+    assert.notEqual(adapter.starts[0]?.cwd, "/repo/.worktrees/duplicate");
+    const savedNode = await runtime.getGoalDagNode("goal-1", "build");
+    assert.equal(savedNode?.preparedResources?.workspacePath, "/repo/.worktrees/build");
+    assert.equal(savedNode?.preparedResources?.branch, "feat/build");
+    assert.equal(savedNode?.lastRecoveryDecision?.action, "restartRunnerSameWorktreeNewSession");
 });
 test("controller blocks stale missing-session replacement after retry budget is exhausted", async () => {
     const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);

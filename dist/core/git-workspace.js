@@ -366,7 +366,40 @@ export function createNativeGitSubagentBranchIntegrator(manager, options) {
     };
 }
 export function cleanupTerminalSubagentWorkspaces(manager, state, policy = {}) {
-    return state.subagents.map((subagent) => cleanupSubagentWorkspace(manager, subagent, policy));
+    return terminalCleanupTargets(state).map((subagent) => cleanupSubagentWorkspace(manager, subagent, policy));
+}
+function terminalCleanupTargets(state) {
+    const nodesById = new Map(state.nodes.map((node) => [node.nodeId, node]));
+    const targets = state.subagents.map((subagent) => {
+        const resources = nodesById.get(subagent.nodeId)?.preparedResources;
+        if (!resources)
+            return subagent;
+        return {
+            ...subagent,
+            workspacePath: subagent.workspacePath ?? resources.workspacePath,
+            branch: subagent.branch ?? resources.branch,
+            ref: subagent.ref ?? resources.ref,
+            sessionId: subagent.sessionId ?? resources.sessionId,
+            sessionFile: subagent.sessionFile ?? resources.sessionFile,
+        };
+    });
+    const byResource = new Map();
+    for (const target of targets) {
+        const key = target.workspacePath ? `workspace:${target.workspacePath}:${target.branch ?? ""}` : `subagent:${target.goalId}:${target.subagentId}`;
+        const group = byResource.get(key) ?? [];
+        group.push(target);
+        byResource.set(key, group);
+    }
+    return [...byResource.values()].map(selectCleanupRepresentative);
+}
+function selectCleanupRepresentative(group) {
+    const completed = group.filter((subagent) => subagent.status === "complete").sort((a, b) => compareIsoDesc(a.updatedAt, b.updatedAt))[0];
+    if (completed)
+        return completed;
+    return [...group].sort((a, b) => compareIsoDesc(a.updatedAt, b.updatedAt))[0];
+}
+function compareIsoDesc(left, right) {
+    return right.localeCompare(left);
 }
 export function cleanupSubagentWorkspace(manager, subagent, policy = {}) {
     if (!["complete", "blocked", "failed"].includes(subagent.status)) {

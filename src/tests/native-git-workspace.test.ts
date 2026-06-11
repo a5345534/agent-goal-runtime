@@ -14,6 +14,7 @@ import {
   NativeGitWorkspaceManager,
   slugForGoal,
   slugForGoalSubagent,
+  type GoalDagNode,
   type GoalSubagentRecord,
   type HarnessSubagentAdapter,
   type HarnessSubagentStartRequest,
@@ -318,6 +319,54 @@ test("native git cleanup policy removes completed subagent worktrees and preserv
     assert.equal(git(blocked.worktreePath, ["branch", "--show-current"]), blocked.branch);
 
     manager.cleanupWorkspace({ repoRoot: repo, worktreePath: blocked.worktreePath, branch: blocked.branch, force: true });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("native git cleanup can use controller-owned prepared resource records", () => {
+  const repo = createRepo();
+  try {
+    const manager = new NativeGitWorkspaceManager({ defaultBaseRef: "main", fetch: false });
+    const allocation = manager.allocateSubagentWorkspace({ invocationCwd: repo, goalId: "goal-prepared", nodeId: "prepared-node" });
+    const node: GoalDagNode = {
+      goalId: "goal-prepared",
+      nodeId: "prepared-node",
+      slug: "prepared-node",
+      objective: "Prepared cleanup",
+      dependencyNodeIds: [],
+      expectedOutputs: [],
+      validators: [],
+      completionGates: ["controller-validation"],
+      status: "complete",
+      lifecyclePhase: "terminal",
+      preparedResources: {
+        subagentId: allocation.subagentId,
+        adapterId: "fake",
+        workspacePath: allocation.worktreePath,
+        branch: allocation.branch,
+        createdAt: "2026-06-02T00:00:00.000Z",
+        updatedAt: "2026-06-02T00:00:00.000Z",
+      },
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:00:00.000Z",
+    };
+    const subagent: GoalSubagentRecord = {
+      goalId: "goal-prepared",
+      nodeId: "prepared-node",
+      subagentId: allocation.subagentId,
+      harnessAdapterId: "fake",
+      status: "complete",
+      prompts: [],
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:00:00.000Z",
+    };
+
+    const [result] = cleanupTerminalSubagentWorkspaces(manager, { goalId: "goal-prepared", nodes: [node], subagents: [subagent] }, { force: true });
+
+    assert.equal(result?.action, "removed");
+    assert.equal(result?.workspacePath, allocation.worktreePath);
+    assert.equal(existsSync(allocation.worktreePath), false);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

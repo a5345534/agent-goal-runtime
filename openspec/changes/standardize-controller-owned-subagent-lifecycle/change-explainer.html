@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="openspec-explainer-mode" content="decision-review">
+  <title>Decision Review：standardize-controller-owned-subagent-lifecycle</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2f;
+      --panel-2: #17213a;
+      --text: #eef4ff;
+      --muted: #a9b7d0;
+      --line: #2a3a5f;
+      --accent: #72e0d1;
+      --accent-2: #9bb7ff;
+      --warn: #ffd166;
+      --danger: #ff6b6b;
+      --ok: #9be564;
+      --shadow: 0 20px 60px rgba(0,0,0,.35);
+      --radius: 18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; min-width: 0; }
+    html { scroll-behavior: smooth; max-width: 100%; }
+    body { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 20% 0%, rgba(114,224,209,.18), transparent 34%),
+                  radial-gradient(circle at 90% 10%, rgba(155,183,255,.20), transparent 30%),
+                  var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.65;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .shell { display: block; min-height: 100vh; }
+    aside {
+      position: relative; overflow: visible;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9,14,27,.82); backdrop-filter: blur(12px);
+      padding: 22px 18px;
+    }
+    .brand { margin-bottom: 24px; }
+    .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: .08em; font-size: 12px; text-transform: uppercase; }
+    .brand h1 { font-size: 19px; line-height: 1.25; margin: 8px 0 10px; }
+    .status-pill { display: inline-flex; gap: 8px; align-items: center; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--warn); box-shadow: 0 0 16px var(--warn); }
+    nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 20px 0; }
+    nav a { color: var(--muted); padding: 9px 10px; border-radius: 10px; border: 1px solid transparent; }
+    nav a:hover { color: var(--text); border-color: var(--line); background: rgba(255,255,255,.04); text-decoration: none; }
+    main { padding: 36px; max-width: 1180px; width: 100%; margin: 0 auto; }
+    section { margin: 0 0 28px; }
+    .hero, .card, .decision, .slice, .risk-card, .prompt-card {
+      background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.025));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: 34px; }
+    .hero h2 { margin: 0 0 14px; font-size: clamp(28px, 5vw, 52px); line-height: 1.05; letter-spacing: -.04em; }
+    .hero p { color: var(--muted); max-width: 920px; font-size: 18px; }
+    .hero-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 22px; }
+    .metric { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: rgba(0,0,0,.16); }
+    .metric strong { display: block; font-size: 22px; }
+    .metric span { color: var(--muted); font-size: 13px; }
+    h2.section-title { margin: 0 0 14px; font-size: 26px; letter-spacing: -.02em; }
+    h3 { margin: 0 0 10px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .card { padding: 22px; }
+    .card p, .card li, .decision p, .slice p { color: var(--muted); }
+    .tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; margin: 2px 4px 2px 0; }
+    .tag.ok { color: var(--ok); border-color: rgba(155,229,100,.35); }
+    .tag.warn { color: var(--warn); border-color: rgba(255,209,102,.35); }
+    .tag.danger { color: var(--danger); border-color: rgba(255,107,107,.35); }
+    .before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .before, .after { padding: 20px; border-radius: 16px; border: 1px solid var(--line); }
+    .before { background: rgba(255,107,107,.08); }
+    .after { background: rgba(114,224,209,.08); }
+    .flow-wrap { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(0,0,0,.18); padding: 16px; }
+    img, svg, video, canvas, iframe, table, .pre { max-width: 100%; }
+    svg { height: auto; display: block; }
+    svg text { font-family: var(--sans); fill: var(--text); font-size: 13px; }
+    svg .muted { fill: var(--muted); font-size: 11px; }
+    svg .box { fill: #17213a; stroke: #466088; stroke-width: 1.5; }
+    svg .box-accent { fill: #123334; stroke: #72e0d1; }
+    svg .box-warn { fill: #382b13; stroke: #ffd166; }
+    svg .arrow { stroke: #9bb7ff; stroke-width: 2; marker-end: url(#arrow); }
+    .decision { padding: 20px; display: grid; gap: 10px; }
+    .decision header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .decision .choice { color: var(--text); font-weight: 700; }
+    .trade { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .trade div { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(0,0,0,.13); }
+    .slices { display: grid; gap: 14px; }
+    .slice { padding: 18px; border-left: 4px solid var(--accent-2); }
+    .slice ul { margin: 8px 0 0; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    button, .button {
+      background: rgba(114,224,209,.12); color: var(--text); border: 1px solid rgba(114,224,209,.35);
+      border-radius: 11px; padding: 9px 12px; cursor: pointer; font: inherit;
+    }
+    button:hover, .button:hover { background: rgba(114,224,209,.20); text-decoration: none; }
+    .risk-list { display: grid; gap: 12px; }
+    .risk-card { padding: 16px; border-left: 4px solid var(--warn); }
+    .risk-card[data-severity="High"] { border-left-color: var(--danger); }
+    .risk-card[data-severity="Medium"] { border-left-color: var(--warn); }
+    .risk-card.hidden { display: none; }
+    .pre, code { font-family: var(--mono); }
+    code { color: #dbe7ff; background: rgba(255,255,255,.07); padding: 2px 5px; border-radius: 6px; }
+    .pre { white-space: pre-wrap; word-break: break-word; overflow: auto; background: rgba(0,0,0,.26); border: 1px solid var(--line); border-radius: 14px; padding: 14px; color: #dbe7ff; }
+    .copy-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
+    .prompt-card { padding: 18px; }
+    .source-list { display: grid; gap: 8px; }
+    .source-list li { color: var(--muted); }
+    .callout { border: 1px solid rgba(255,209,102,.35); background: rgba(255,209,102,.08); border-radius: 16px; padding: 16px; }
+    .footer { color: var(--muted); border-top: 1px solid var(--line); padding-top: 18px; margin-top: 30px; }
+    @media (max-width: 960px) {
+      main { padding: 20px; }
+      .hero-grid, .grid-2, .grid-3, .before-after, .trade { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside>
+    <div class="brand">
+      <div class="eyebrow">OpenSpec Decision Review</div>
+      <h1>standardize-controller-owned-subagent-lifecycle</h1>
+      <div class="status-pill"><span class="dot"></span>Change draft · source-grounded</div>
+    </div>
+    <nav aria-label="Primary navigation">
+      <a href="#summary">摘要</a>
+      <a href="#why">Why</a>
+      <a href="#what-changes">What changes</a>
+      <a href="#affected-surfaces">Affected surfaces</a>
+      <a href="#scope-boundaries">Scope boundaries</a>
+      <a href="#rollout">Rollout</a>
+      <a href="#current-status">Current status</a>
+      <a href="#before-after">Before / After</a>
+      <a href="#flow">架構流程</a>
+      <a href="#decisions">決策點</a>
+      <a href="#slices">Implementation slices</a>
+      <a href="#verification">驗證計畫</a>
+      <a href="#risks">風險登錄</a>
+      <a href="#prompts">Agent prompts</a>
+      <a href="#sources">來源與開放問題</a>
+    </nav>
+    <div class="copy-row"><button data-copy-target="decision-summary">複製決策摘要</button></div>
+    <div class="copy-row"><button id="copy-task-json">複製 task JSON</button></div>
+  </aside>
+
+  <main>
+    <section class="hero" id="summary">
+      <div class="eyebrow">決策焦點</div>
+      <h2>把 controller 變成 node lifecycle 與資源權威，讓 adapter 回到正式觀察路徑。</h2>
+      <p>
+        這個 change 將目前混在 controller/adapters 內的大量例外恢復分支，拆成「正式路徑」與「例外處理器」。
+        Controller 先建立或驗證 branch、worktree、session，再讓 subagent/runner 加入；adapter 只回報標準化 observation；
+        abnormal observation 則交給 ControllerExceptionHandler 與可治理的 recovery rule/playbook。
+      </p>
+      <div class="hero-grid" role="list">
+        <div class="metric" role="listitem"><strong>1</strong><span>新增 capability：controller-subagent-lifecycle</span></div>
+        <div class="metric" role="listitem"><strong>6</strong><span>設計決策 D1–D6</span></div>
+        <div class="metric" role="listitem"><strong>7</strong><span>Implementation / validation task groups</span></div>
+        <div class="metric" role="listitem"><strong>3</strong><span>仍待 review 的 open questions</span></div>
+      </div>
+      <div id="decision-summary" hidden>
+Change: standardize-controller-owned-subagent-lifecycle
+Capability: controller-subagent-lifecycle
+Decision: Controller owns DAG node lifecycle and resources; adapters attach to prepared resources and report normalized observations; abnormal observations go to ControllerExceptionHandler; repeated signatures produce auditable recovery-rule/playbook proposals; completion remains controller-validated and integrated.
+Success signal: nodes expose controller-owned acceptance/resource/runner/observation/judgment/validation/integration phases; retries do not create duplicate uncontrolled branches/worktrees/sessions.
+      </div>
+    </section>
+
+    <section class="grid-2" aria-label="Required review markers">
+      <article class="card" id="why">
+        <h2 class="section-title">Why</h2>
+        <p>目前 controller/subagent orchestration 把正式流程與大量 exception-specific recovery 混在一起。這些 recovery 曾解決真實事件，但也讓 controller loop 難以推理，並可能建立 duplicate sessions 或 replacement attempts，導致有用上下文流失。</p>
+        <p>此 change 的壓力來自使用者明確決策：controller 應成為 node lifecycle 與 resource inventory 的權威；adapter 走正式 observation path；abnormal recovery scripts 應移到獨立 exception handler。</p>
+      </article>
+      <article class="card" id="what-changes">
+        <h2 class="section-title">What Changes</h2>
+        <ul>
+          <li>新增 controller-owned DAG node lifecycle：acceptance、resource initialization、runner join/start、adapter observation、controller judgment、validation、integration、terminal closeout。</li>
+          <li>branch/worktree/session ownership 移入 controller lifecycle；subagent/adapter 在正式路徑只 attach 到 prepared resources。</li>
+          <li>adapter 回報 normalized observations；exception handler 決定 protocol violation、runner error/lost、stale/unresolved、blocked 等恢復動作。</li>
+          <li>新增 controller recovery policy/playbook：deterministic rules 優先，unknown/repeated failures 可 invoke controller model 並產生 auditable recovery-rule proposal。</li>
+        </ul>
+      </article>
+      <article class="card" id="affected-surfaces">
+        <h2 class="section-title">Affected Surfaces</h2>
+        <ul>
+          <li>Core：<code>src/core/controller-loop.ts</code>、<code>src/core/subagent-adapter.ts</code>、<code>src/core/types.ts</code>、<code>src/core/git-workspace.ts</code>。</li>
+          <li>Adapters：<code>src/adapters/pi/*</code>、<code>src/adapters/opencode/*</code>。</li>
+          <li>Data/contracts：schemas、durable DAG/subagent state、controller ledger events、recovery decision records、native-git workspace allocation semantics。</li>
+          <li>Operator surfaces：monitor/status 顯示 lifecycle phase、resource ids、abnormal observation、recovery decision、learned-rule id（欄位選擇仍是 open question）。</li>
+        </ul>
+      </article>
+      <article class="card" id="scope-boundaries">
+        <h2 class="section-title">Scope Boundaries</h2>
+        <p><strong>In scope：</strong>controller-owned lifecycle、prepared-resource adapter attach、normalized observation、exception handler、recovery-rule/playbook proposal、validation/integration gate preservation。</p>
+        <p><strong>Out of scope：</strong>unsafe one-shot removal of all legacy recovery behavior、subagent-created branches/worktrees、direct unreviewed source edits by LLM、model-visible /goal tool redesign、unrelated DAG planning semantics。</p>
+      </article>
+      <article class="card" id="rollout">
+        <h2 class="section-title">Rollout</h2>
+        <ol>
+          <li>Add lifecycle/resource/recovery types, schemas, and store fields additively.</li>
+          <li>Introduce prepared-resource adapter capability with legacy <code>startSession</code> compatibility.</li>
+          <li>Route Pi/OpenCode behind feature flag or compatibility shim.</li>
+          <li>Extract existing recovery branches into default exception handler parity decisions.</li>
+          <li>Add controller-model diagnostic and learned-rule proposal support.</li>
+          <li>Switch controller loop to lifecycle-first execution after parity tests pass.</li>
+          <li>Deprecate legacy resource-creating adapter starts after adapters/tests migrate.</li>
+        </ol>
+      </article>
+      <article class="card" id="current-status">
+        <h2 class="section-title">Current Status</h2>
+        <p>Change package is drafted, source manifest has been validated, and the implementation slice now covers lifecycle phase recording, controller-prepared resource reuse, deterministic recovery-rule lookup, controller-model diagnostic hooks, generated-rule policy gates, terminal cleanup via resource records, and Pi/OpenCode monitor visibility. Remaining unchecked work is archive preflight plus explicitly marked backlog items.</p>
+        <p>Open questions remain for generated-rule activation policy, prepared session ownership boundary, and monitor field scope.</p>
+      </article>
+    </section>
+
+    <section id="before-after">
+      <h2 class="section-title">Before / After：評審正在批准什麼改變</h2>
+      <div class="before-after">
+        <div class="before">
+          <h3>Before：正式路徑與例外分支混在一起</h3>
+          <ul>
+            <li>Ready node 透過 workspace allocator 與 <code>adapter.startSession()</code> 啟動。</li>
+            <li>Pi/OpenCode adapter 啟動 detached runner 並從 transcript 推論狀態。</li>
+            <li>Controller loop 同時處理 validation、integration 與 transient/quota/context/missing-session/terminated/stale 等 hard-coded recovery branches。</li>
+            <li>Replacement session/workspace 可能造成 duplicate resources 或遺失有用上下文。</li>
+          </ul>
+        </div>
+        <div class="after">
+          <h3>After：controller lifecycle + adapter observation + exception handler</h3>
+          <ul>
+            <li>Controller 先定義 acceptance，再建立/驗證 branch、worktree、session、model routing。</li>
+            <li>Subagent/adapter 僅 attach/start 到 controller-prepared resources。</li>
+            <li>Adapter 只回報 normalized observations，例如 <code>selfReportedComplete</code>、<code>protocolViolation</code>、<code>runnerLost</code>。</li>
+            <li>Exception handler 根據 deterministic rules、controller-model diagnostic、learned rule proposals 做恢復決策。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="flow">
+      <h2 class="section-title">Source-grounded lifecycle flow</h2>
+      <div class="flow-wrap" aria-label="Architecture flow visual">
+        <svg width="100%" height="430" viewBox="0 0 1180 430" role="img" aria-labelledby="flowTitle flowDesc">
+          <title id="flowTitle">Controller-owned subagent lifecycle flow</title>
+          <desc id="flowDesc">Controller defines acceptance, creates resources, adapter attaches runner, observations flow to judgment, validation, integration, or exception handler.</desc>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#9bb7ff"></path>
+            </marker>
+          </defs>
+          <rect class="box-accent" x="20" y="48" width="150" height="64" rx="14"></rect>
+          <text x="95" y="75" text-anchor="middle">acceptanceDefined</text>
+          <text class="muted" x="95" y="96" text-anchor="middle">outputs / validators / gates</text>
+
+          <line class="arrow" x1="170" y1="80" x2="218" y2="80"></line>
+          <rect class="box-accent" x="220" y="48" width="150" height="64" rx="14"></rect>
+          <text x="295" y="75" text-anchor="middle">resourcesCreating</text>
+          <text class="muted" x="295" y="96" text-anchor="middle">branch / worktree / session</text>
+
+          <line class="arrow" x1="370" y1="80" x2="418" y2="80"></line>
+          <rect class="box-accent" x="420" y="48" width="150" height="64" rx="14"></rect>
+          <text x="495" y="75" text-anchor="middle">resourcesReady</text>
+          <text class="muted" x="495" y="96" text-anchor="middle">recorded + verified</text>
+
+          <line class="arrow" x1="570" y1="80" x2="618" y2="80"></line>
+          <rect class="box" x="620" y="48" width="150" height="64" rx="14"></rect>
+          <text x="695" y="75" text-anchor="middle">runnerStarting</text>
+          <text class="muted" x="695" y="96" text-anchor="middle">adapter attach/start</text>
+
+          <line class="arrow" x1="770" y1="80" x2="818" y2="80"></line>
+          <rect class="box" x="820" y="48" width="150" height="64" rx="14"></rect>
+          <text x="895" y="75" text-anchor="middle">runnerActive</text>
+          <text class="muted" x="895" y="96" text-anchor="middle">running / idle</text>
+
+          <line class="arrow" x1="895" y1="112" x2="895" y2="160"></line>
+          <rect class="box" x="770" y="162" width="250" height="72" rx="14"></rect>
+          <text x="895" y="190" text-anchor="middle">adapter observation</text>
+          <text class="muted" x="895" y="212" text-anchor="middle">complete / blocked / violation / error / lost</text>
+
+          <line class="arrow" x1="770" y1="198" x2="692" y2="198"></line>
+          <rect class="box-accent" x="500" y="162" width="190" height="72" rx="14"></rect>
+          <text x="595" y="190" text-anchor="middle">controllerJudging</text>
+          <text class="muted" x="595" y="212" text-anchor="middle">self-report is untrusted</text>
+
+          <line class="arrow" x1="595" y1="234" x2="595" y2="284"></line>
+          <rect class="box-accent" x="500" y="286" width="190" height="58" rx="14"></rect>
+          <text x="595" y="320" text-anchor="middle">validating</text>
+
+          <line class="arrow" x1="690" y1="315" x2="758" y2="315"></line>
+          <rect class="box-accent" x="760" y="286" width="190" height="58" rx="14"></rect>
+          <text x="855" y="320" text-anchor="middle">integrating</text>
+
+          <line class="arrow" x1="950" y1="315" x2="1018" y2="315"></line>
+          <rect class="box-accent" x="1020" y="286" width="140" height="58" rx="14"></rect>
+          <text x="1090" y="320" text-anchor="middle">terminal</text>
+
+          <line class="arrow" x1="895" y1="234" x2="895" y2="265"></line>
+          <rect class="box-warn" x="760" y="365" width="270" height="52" rx="14"></rect>
+          <text x="895" y="397" text-anchor="middle">ControllerExceptionHandler</text>
+          <line class="arrow" x1="895" y1="365" x2="895" y2="236"></line>
+          <text class="muted" x="895" y="392" text-anchor="middle">rules → model diagnostic → recovery decision</text>
+        </svg>
+      </div>
+    </section>
+
+    <section id="decisions">
+      <h2 class="section-title">決策點、取捨與建議</h2>
+      <div class="grid-2">
+        <article class="decision">
+          <header><h3>D1. Controller owns lifecycle/resources</h3><span class="tag ok">Recommendation: Accept</span></header>
+          <p class="choice">選擇：新增 durable node execution lifecycle，並保留 coarse status projection 供 migration。</p>
+          <div class="trade"><div><strong>取捨</strong><p>狀態模型較大，但能避免資源權責分散。</p></div><div><strong>拒絕方案</strong><p>只擴充現有 enum；只保留 workspace hook。</p></div></div>
+        </article>
+        <article class="decision">
+          <header><h3>D2. Adapter formal observation</h3><span class="tag ok">Recommendation: Accept</span></header>
+          <p class="choice">選擇：adapter attach/start prepared resources，並回報 facts/protocol observations，不做 recovery policy。</p>
+          <div class="trade"><div><strong>取捨</strong><p>需要新 contract，但可讓 Pi/OpenCode 共用 controller policy。</p></div><div><strong>拒絕方案</strong><p>把 exception logic 放在 adapter；沿用混合式 failed/needsFollowup。</p></div></div>
+        </article>
+        <article class="decision">
+          <header><h3>D3. Exception handler owns recovery</h3><span class="tag ok">Recommendation: Accept</span></header>
+          <p class="choice">選擇：異常 observation 進 ControllerExceptionHandler，輸出 durable RecoveryDecision。</p>
+          <div class="trade"><div><strong>取捨</strong><p>多一層抽象，但主流程與例外恢復分離。</p></div><div><strong>拒絕方案</strong><p>繼續在 controller-loop 增加 pattern branches；所有情況都問模型。</p></div></div>
+        </article>
+        <article class="decision">
+          <header><h3>D4. Repeated failures → rule proposals</h3><span class="tag warn">Open activation policy</span></header>
+          <p class="choice">選擇：重複 signature 產生可審核 recovery-rule/playbook proposal，不直接改 source。</p>
+          <div class="trade"><div><strong>取捨</strong><p>學習能力需 governance；避免未審核 runtime source edit。</p></div><div><strong>待決</strong><p>自動啟用還是 human review 後啟用仍是 open question。</p></div></div>
+        </article>
+        <article class="decision">
+          <header><h3>D5. Recovery reuses resources</h3><span class="tag ok">Recommendation: Accept</span></header>
+          <p class="choice">選擇：預設重用 controller-owned worktree/branch/session；新資源需 supersession reason。</p>
+          <div class="trade"><div><strong>取捨</strong><p>保留 context，但可能保留 dirty/bad state。</p></div><div><strong>緩解</strong><p>exception handler 需記錄 dirty state 並可 ask user/supersede。</p></div></div>
+        </article>
+        <article class="decision">
+          <header><h3>D6. Completion stays validated</h3><span class="tag ok">Recommendation: Accept</span></header>
+          <p class="choice">選擇：<code>SUBAGENT_RESULT</code> 只進 controllerJudging，仍需 validation/integration。</p>
+          <div class="trade"><div><strong>取捨</strong><p>完成路徑較長，但維持 self-report 不可信任的安全邊界。</p></div><div><strong>拒絕方案</strong><p>把 subagent self-report 視為 terminal complete。</p></div></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="slices">
+      <h2 class="section-title">Implementation slices 與 acceptance criteria</h2>
+      <div class="slices">
+        <article class="slice">
+          <h3>Slice 1 — Spec / Contract foundation</h3>
+          <p>定義 lifecycle phase、prepared resource、adapter observation、exception handler、RecoveryDecision、recovery rule/playbook。</p>
+          <ul><li>Acceptance：schemas/store/contracts 可表示 lifecycle/resource/recovery evidence 且不破壞既有 status consumers。</li></ul>
+        </article>
+        <article class="slice">
+          <h3>Slice 2 — Controller-owned lifecycle</h3>
+          <p>加入 lifecycle transitions、coarse status projection，並把 node branch/worktree/session preparation 移入 controller lifecycle step。</p>
+          <ul><li>Acceptance：ready node 在 subagent work 前會記錄 <code>acceptanceDefined</code>、<code>resourcesCreating</code>、<code>resourcesReady</code>、<code>runnerStarting</code>、<code>runnerActive</code>。</li></ul>
+        </article>
+        <article class="slice">
+          <h3>Slice 3 — Adapter formal path</h3>
+          <p>Pi/OpenCode 支援 prepared-resource attach/start，adapter inspection emit normalized observations，保留 formal markers parsing。</p>
+          <ul><li>Acceptance：adapter 不做 context/model fallback、replacement、terminal blocking 等 recovery policy decision。</li></ul>
+        </article>
+        <article class="slice">
+          <h3>Slice 4 — Exception handler / recovery policy</h3>
+          <p>抽出既有 recovery 行為成 parity decisions，新增 deterministic rule lookup、controller-model diagnostic、rule proposal persistence。</p>
+          <ul><li>Acceptance：protocolViolation、runnerError、runnerLost、stale/unresolved、self-reported blocked 皆透過 exception handler 並持久化 decision。</li></ul>
+        </article>
+        <article class="slice">
+          <h3>Slice 5 — Validation / integration / closeout</h3>
+          <p>保留 selfReportedComplete → controllerJudging → validating → integrating → complete；closeout/cleanup 使用 controller-owned resource records。</p>
+          <ul><li>Acceptance：required integration gates 仍阻止未整合 node complete。</li></ul>
+        </article>
+        <article class="slice">
+          <h3>Slice 6 — Monitor / documentation / tests</h3>
+          <p>更新 monitor/status、README、adapter contract，補 lifecycle、adapter observation、exception-handler parity、no duplicate resources 等測試。</p>
+          <ul><li>Acceptance：`npm run check` 通過，source manifest refresh/validation 通過。</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="verification">
+      <h2 class="section-title">Verification plan</h2>
+      <div class="grid-3">
+        <div class="card"><h3>Unit / Contract</h3><ul><li>Lifecycle transition tests</li><li>Coarse status projection tests</li><li>Adapter observation contract tests：result marker、blocked marker、protocol violation、runner error、runner lost、running、idle</li></ul></div>
+        <div class="card"><h3>Recovery / Resource</h3><ul><li>Exception-handler parity tests</li><li>Same-node retry 不建立 duplicate uncontrolled branch/worktree/session</li><li>Generated recovery-rule persistence 與 activation policy tests</li></ul></div>
+        <div class="card"><h3>Integration / Migration</h3><ul><li>Pi/OpenCode prepared-resource attach compatibility</li><li>Schema/store migration tests</li><li><code>npm run check</code></li><li>source manifest refresh/validate</li></ul></div>
+      </div>
+    </section>
+
+    <section id="risks">
+      <h2 class="section-title">Risk register 與 high-risk filter</h2>
+      <div class="filters" aria-label="Risk filters">
+        <button data-risk-filter="all">全部</button>
+        <button data-risk-filter="High">只看 High</button>
+        <button data-risk-filter="Medium">只看 Medium</button>
+      </div>
+      <div class="risk-list">
+        <article class="risk-card" data-severity="High"><h3>Lifecycle state model is too large for one change <span class="tag danger">High</span></h3><p>Mitigation：additive implementation、compatibility projections；必要時拆 follow-up。</p></article>
+        <article class="risk-card" data-severity="Medium"><h3>Controller-model diagnostics make recovery nondeterministic <span class="tag warn">Medium</span></h3><p>Mitigation：persist evidence/decision、prefer deterministic rules、bounded actions、validation gates。</p></article>
+        <article class="risk-card" data-severity="High"><h3>Generated rules could encode a bad recovery <span class="tag danger">High</span></h3><p>Mitigation：activation state、confidence、source evidence、validation requirements。</p></article>
+        <article class="risk-card" data-severity="Medium"><h3>Prepared-resource attach may not map cleanly to every harness <span class="tag warn">Medium</span></h3><p>Mitigation：adapter capability negotiation 與 legacy fallback。</p></article>
+        <article class="risk-card" data-severity="Medium"><h3>Reusing workspaces can preserve bad dirty state <span class="tag warn">Medium</span></h3><p>Mitigation：exception handler inspect/record dirty state，可 ask user 或 supersede with evidence。</p></article>
+      </div>
+    </section>
+
+    <section id="prompts">
+      <h2 class="section-title">Copyable agent prompts</h2>
+      <div class="grid-3">
+        <article class="prompt-card">
+          <div class="copy-row"><h3>Implementation agent</h3><button data-copy-target="prompt-impl">複製</button></div>
+          <div class="pre" id="prompt-impl">Implement OpenSpec change standardize-controller-owned-subagent-lifecycle. Preserve the source decisions: controller owns lifecycle/resources; adapters only attach/observe; abnormal observations route to ControllerExceptionHandler; repeated signatures create auditable recovery-rule proposals; selfReportedComplete still requires validation and integration. Start with additive lifecycle/resource/recovery types and compatibility projection tests before modifying Pi/OpenCode adapters.</div>
+        </article>
+        <article class="prompt-card">
+          <div class="copy-row"><h3>Review agent</h3><button data-copy-target="prompt-review">複製</button></div>
+          <div class="pre" id="prompt-review">Review implementation against openspec/changes/standardize-controller-owned-subagent-lifecycle. Check that adapter code does not own recovery policy, controller-created resources are reused by default, recovery decisions are durable and evidence-backed, generated rules are auditable rather than source edits, and validation/integration gates still block premature completion.</div>
+        </article>
+        <article class="prompt-card">
+          <div class="copy-row"><h3>Verification agent</h3><button data-copy-target="prompt-verify">複製</button></div>
+          <div class="pre" id="prompt-verify">Verify change standardize-controller-owned-subagent-lifecycle by running lifecycle transition tests, coarse status projection tests, Pi/OpenCode adapter observation contract tests, exception-handler parity tests, same-node retry no-duplicate-resource tests, generated recovery-rule persistence/activation-policy tests, schema/store migration tests, and npm run check. Report source-manifest and explainer validation results.</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="sources">
+      <h2 class="section-title">Sources、assumptions、open questions</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Source manifest</h3>
+          <ul class="source-list">
+            <li><code>proposal.md</code> — sha256 783bbe791a5bc2942e77ba2471522e5a48d913b95e720bbc0796ffa61942797b</li>
+            <li><code>design.md</code> — sha256 2076afda21b24593653603a0e48f55302ad1e95d00be973cfac306852a371ddc</li>
+            <li><code>tasks.md</code> — sha256 aa70440f45e21808e135bbd8ec23e3e8a43257b4170b35eea54dd9e77927b490</li>
+            <li><code>specs/controller-subagent-lifecycle/spec.md</code> — sha256 84c3d27d5ad85a06eb7a68fcca96ad03e20732d9d4c25beed3f34963fd6c3466</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Open questions</h3>
+          <ul>
+            <li>Generated recovery rules 是否在 confidence threshold 後自動啟用，或必須 human review？</li>
+            <li>Prepared session creation 應放在 core runtime、adapter-specific resource provider，還是新的 controller resource manager？</li>
+            <li>Monitor 第一版需要顯示 detailed lifecycle phase、resource ids、recovery decision、learned-rule id，或全部？</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:16px;">
+        <strong>Scope honesty：</strong>此 explainer 不新增 markdown/spec 以外的要求；未決事項保持為 open questions。Archive readiness 仍需完成 tasks、實作、驗證與 preflight。
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Task JSON export</h2>
+      <p class="muted">以下 JSON 由 tasks.md 的實作群組整理，供 review/implementation agent 複製使用。</p>
+      <div class="pre" id="task-json-display">[
+  {"group":"Spec and Contract","tasks":["Define lifecycle/resource/recovery terminology","Add additive durable state","Update adapter observation contracts","Define ControllerExceptionHandler and RecoveryDecision","Update schemas/store/ledger evidence"]},
+  {"group":"Controller-Owned Lifecycle Implementation","tasks":["Add lifecycle transition helpers","Move branch/worktree/session preparation into controller lifecycle","Record acceptance/resource/runner phases before subagent work","Reuse same-node resource record by default","Require explicit resource supersession"]},
+  {"group":"Adapter Formal Path","tasks":["Add prepared-resource attach/start support","Update Pi adapter","Update OpenCode adapter","Emit normalized observations","Keep SUBAGENT_RESULT and SUBAGENT_BLOCKED parsing"]},
+  {"group":"Exception Handler and Recovery Policy","tasks":["Extract existing recovery parity decisions","Route abnormal observations through exception handler","Persist recovery decisions","Lookup deterministic rules before model diagnosis","Add controller-model diagnostic","Write proposed recovery-rule artifacts","Add activation/validation/rollback policy gates"]},
+  {"group":"Validation, Integration, Closeout, Tests, Docs","tasks":["Preserve validation/integration completion semantics","Use controller-owned resource records for closeout","Show lifecycle/recovery data in monitors","Add lifecycle/adapter/recovery/no-duplicate-resource/rule/schema tests","Update docs and README","Run source-manifest/explainer/archive checks"]}
+]</div>
+    </section>
+
+    <div class="footer">
+      Generated directly from OpenSpec sources for review. This HTML is a companion view only; markdown and spec files remain authoritative.
+    </div>
+  </main>
+</div>
+</body>
+</html>

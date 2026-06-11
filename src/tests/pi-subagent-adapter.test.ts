@@ -97,6 +97,33 @@ test("Pi harness subagent adapter starts a detached Pi session and sends the ini
   assert.match(prompts[0] ?? "", /create attendance doctypes/);
 });
 
+test("Pi harness subagent adapter honors controller-prepared resources", async () => {
+  const { launcher, launches } = fakeLauncher();
+  const adapter = new PiHarnessSubagentAdapter({ launcher, modelArg: "fallback/model", now: () => new Date(now) });
+  const result = await adapter.startSession({
+    goalId: "goal-1",
+    node: node(),
+    subagentId: "subagent-1",
+    cwd: "/legacy/worktree",
+    branch: "legacy/branch",
+    initialPrompt: "create attendance doctypes",
+    preparedResources: {
+      workspacePath: "/repo/.worktrees/prepared",
+      branch: "goal/prepared",
+      sessionId: "prepared-session",
+      sessionFile: "/sessions/prepared.jsonl",
+      modelArg: "prepared/model",
+    },
+  });
+
+  assert.equal(launches[0]?.cwd, "/repo/.worktrees/prepared");
+  assert.equal(launches[0]?.sessionId, "prepared-session");
+  assert.equal(launches[0]?.sessionFile, "/sessions/prepared.jsonl");
+  assert.equal(launches[0]?.modelArg, "prepared/model");
+  assert.equal(result.workspacePath, "/repo/.worktrees/prepared");
+  assert.equal(result.branch, "goal/prepared");
+});
+
 test("Pi harness subagent adapter sanitizes truncated session ids for Pi", async () => {
   const { launcher, launches } = fakeLauncher();
   const adapter = new PiHarnessSubagentAdapter({ launcher, now: () => new Date(now) });

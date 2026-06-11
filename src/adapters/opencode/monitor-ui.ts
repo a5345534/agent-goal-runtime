@@ -66,8 +66,25 @@ export function renderOpencodeMonitorLines(
     lines.push("");
     lines.push(
       `${index + 1}. [${node.status}] ${truncate(node.slug || node.nodeId, maxLineWidth)} ` +
-        `runtime=${formatRuntime(node.createdAt, now())} updated=${formatAgo(node.updatedAt, now())}`,
+        `phase=${node.lifecyclePhase ?? "-"} runtime=${formatRuntime(node.createdAt, now())} updated=${formatAgo(node.updatedAt, now())}`,
     );
+    if (node.preparedResources) {
+      const resourceParts = [
+        node.preparedResources.workspacePath ? `workspace=${node.preparedResources.workspacePath}` : undefined,
+        node.preparedResources.branch ? `branch=${node.preparedResources.branch}` : undefined,
+        node.preparedResources.sessionId ? `session=${node.preparedResources.sessionId}` : undefined,
+        node.preparedResources.modelArg ? `model=${node.preparedResources.modelArg}` : undefined,
+      ].filter((part): part is string => Boolean(part));
+      if (resourceParts.length) lines.push(`   resources: ${truncate(resourceParts.join(" "), maxLineWidth - 3)}`);
+    }
+    if (node.lastAdapterObservation) {
+      const observation = `${node.lastAdapterObservation.kind}${node.lastAdapterObservation.error ? ` error=${node.lastAdapterObservation.error}` : node.lastAdapterObservation.summary ? ` summary=${node.lastAdapterObservation.summary}` : ""}`;
+      lines.push(`   observation: ${truncate(observation, maxLineWidth - 3)}`);
+    }
+    if (node.lastRecoveryDecision) {
+      const decision = `${node.lastRecoveryDecision.action}${node.lastRecoveryDecision.ruleId ? ` rule=${node.lastRecoveryDecision.ruleId}` : ""}: ${node.lastRecoveryDecision.reason}`;
+      lines.push(`   recovery: ${truncate(decision, maxLineWidth - 3)}`);
+    }
     if (node.lastValidationSummary) lines.push(`   validation: ${truncate(node.lastValidationSummary, maxLineWidth - 3)}`);
     if (node.modelScenario || node.modelArg) {
       const parts: string[] = [];
@@ -91,6 +108,11 @@ export function renderOpencodeMonitorLines(
         lines.push(
           `      workspace: ${truncate(subagent.workspacePath, maxLineWidth - 6)}${stillExists ? "" : " (missing)"}`,
         );
+      }
+      if (subagent.lastAdapterObservation) lines.push(`      observation: ${truncate(subagent.lastAdapterObservation.kind, maxLineWidth - 6)}`);
+      if (subagent.lastRecoveryDecision) {
+        const recovery = `${subagent.lastRecoveryDecision.action}${subagent.lastRecoveryDecision.ruleId ? ` rule=${subagent.lastRecoveryDecision.ruleId}` : ""}`;
+        lines.push(`      recovery: ${truncate(recovery, maxLineWidth - 6)}`);
       }
       const note = subagent.integrationStatus ?? subagent.selfReportedResult;
       if (note) lines.push(`      note: ${truncate(note, maxLineWidth - 6)}`);

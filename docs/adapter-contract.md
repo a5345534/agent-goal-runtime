@@ -14,9 +14,31 @@ A full adapter connects the portable runtime to a host harness.
 8. Classify meaningful progress so automatic continuation does not loop after pure chat/status turns.
 9. Enforce same-turn post-stop tool guarding where the host can intercept tool calls.
 10. Persist goal-session metadata and expose goal registry/listing/target-resolution UX without adding model-visible cross-goal tools.
-11. For harnesses that support goal-owned sessions, bind each new execution session to an explicit prepared workspace and verify branch/ref bindings read-only.
-12. Optionally provide a completion auditor behind `update_goal({"status":"complete"})`.
-13. Provide a smoke/conformance report.
+11. For harnesses that support goal-owned sessions, bind each new execution session to an explicit controller-prepared workspace/session resource and verify branch/ref bindings read-only.
+12. Report normalized subagent observations from prepared resources (`running`, `idle`, `selfReportedComplete`, `selfReportedBlocked`, `protocolViolation`, `runnerError`, `runnerLost`, `stopped`) without deciding controller recovery policy.
+13. Optionally provide a completion auditor behind `update_goal({"status":"complete"})`.
+14. Provide a smoke/conformance report.
+
+## Controller-owned subagent lifecycle
+
+DAG node execution now has an additive controller-owned lifecycle model. The
+runtime can persist detailed phases such as `acceptanceDefined`,
+`resourcesCreating`, `resourcesReady`, `runnerStarting`, `runnerActive`,
+`controllerJudging`, `validating`, `integrating`, and `terminal` while preserving
+coarse `GoalDagNode.status` projections for existing UI/scheduler code.
+
+Adapters should treat branch/worktree/session details as prepared resources from
+the controller. In the formal path, an adapter attaches or starts the host runner
+against those resources and reports observations. The adapter may parse formal
+subagent protocol markers (`SUBAGENT_RESULT:` and `SUBAGENT_BLOCKED:`), but it
+must not decide model fallback, replacement strategy, retry limits, stale-session
+recovery, or terminal blocking. Abnormal observations can be routed through a
+controller exception handler, which records a durable recovery decision and may
+use deterministic recovery playbooks or controller-model diagnosis.
+
+Legacy `startSession` adapters remain supported during migration. New adapters
+should accept the optional prepared-resource fields in the subagent start request
+and should keep resource creation outside the subagent's own work loop.
 
 ## Hidden turn callback
 

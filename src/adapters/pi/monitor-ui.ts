@@ -577,6 +577,10 @@ function formatControllerHistoryDetails(eventName: string, details: Record<strin
   append("summary", details.summary, 140);
   append("reason", details.reason, 140);
   append("error", details.error, 140);
+  append("observation", details.observation, 48);
+  append("action", details.action, 48);
+  append("rule", details.ruleId, 72);
+  append("activation", details.activationState, 32);
   for (const key of ["started", "synced", "validating", "completed", "followups", "blocked", "failed", "ready", "queueBlocked", "nodes", "subagents", "validators", "expectedOutputs", "retry", "maxRetries", "signals", "changed", "allComplete", "integrationIssues", "subagentCleanupErrors"]) {
     append(key, details[key], 32);
   }
@@ -593,8 +597,14 @@ function formatControllerHistoryDetails(eventName: string, details: Record<strin
 function renderNodeListRow(node: GoalDagNode, subagents: GoalSubagentRecord[], index: number, now: Date): string {
   const latest = latestSubagent(subagents);
   const latestLabel = latest ? ` latest=${latest.status}` : " latest=-";
+  const phase = node.lifecyclePhase ? ` phase=${node.lifecyclePhase}` : " phase=-";
+  const resource = node.preparedResources?.workspacePath || node.preparedResources?.branch
+    ? ` resource=${shortenMiddle(node.preparedResources.workspacePath ?? node.preparedResources.branch ?? "", 34)}`
+    : "";
+  const observation = node.lastAdapterObservation ? ` obs=${node.lastAdapterObservation.kind}` : "";
+  const recovery = node.lastRecoveryDecision ? ` recovery=${node.lastRecoveryDecision.action}${node.lastRecoveryDecision.ruleId ? `:${shortenMiddle(node.lastRecoveryDecision.ruleId, 24)}` : ""}` : "";
   const model = node.modelScenario || node.modelArg ? ` model=${formatMonitorModel(node.modelScenario, node.modelArg, node.thinkingLevel)}` : "";
-  return `${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 58)} runners=${subagents.length}${latestLabel} updated=${formatAgo(node.updatedAt, now)}${model}`;
+  return `${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 44)} runners=${subagents.length}${latestLabel} updated=${formatAgo(node.updatedAt, now)}${phase}${resource}${observation}${recovery}${model}`;
 }
 
 function renderRunnerListRow(subagent: GoalSubagentRecord, index: number, now: Date, runners: PiBackgroundRunnerRecord[] = []): string {
@@ -624,16 +634,38 @@ function renderRunnerLiveLines(node: GoalDagNode, subagent: GoalSubagentRecord, 
   const note = subagent.integrationStatus ?? subagent.selfReportedResult;
   return [
     `runner: [${subagent.status}] ${subagent.subagentId}`,
-    `node: ${node.nodeId} (${node.status})`,
+    `node: ${node.nodeId} (${node.status}) phase=${node.lifecyclePhase ?? "-"}`,
     `runtime=${formatRuntime(subagent.createdAt, now)} last=${formatAgo(subagent.lastActivityAt ?? subagent.updatedAt, now)}`,
+    node.preparedResources ? `prepared: ${formatPreparedResources(node)}` : undefined,
     subagent.branch ? `branch: ${subagent.branch}` : undefined,
     subagent.workspacePath ? `workspace: ${shortenPath(subagent.workspacePath)}` : undefined,
     subagent.sessionFile ? `session: ${shortenPath(subagent.sessionFile)}` : undefined,
+    subagent.lastAdapterObservation ? `observation: ${formatObservation(subagent.lastAdapterObservation.kind, subagent.lastAdapterObservation.error ?? subagent.lastAdapterObservation.summary)}` : undefined,
+    subagent.lastRecoveryDecision ? `recovery: ${formatRecoveryDecision(subagent.lastRecoveryDecision.action, subagent.lastRecoveryDecision.ruleId, subagent.lastRecoveryDecision.reason)}` : undefined,
     integration ? `integration: ${integration}` : undefined,
     note ? `note: ${note}` : undefined,
     "transcript:",
     ...transcript.lines,
   ].filter((line): line is string => Boolean(line));
+}
+
+function formatPreparedResources(node: GoalDagNode): string {
+  const resources = node.preparedResources;
+  if (!resources) return "-";
+  return [
+    resources.workspacePath ? `workspace=${shortenPath(resources.workspacePath)}` : undefined,
+    resources.branch ? `branch=${resources.branch}` : undefined,
+    resources.sessionId ? `session=${shortenMiddle(resources.sessionId, 32)}` : undefined,
+    resources.modelArg ? `model=${shortenMiddle(resources.modelArg, 48)}` : undefined,
+  ].filter((part): part is string => Boolean(part)).join(" ") || "-";
+}
+
+function formatObservation(kind: string, detail?: string): string {
+  return detail ? `${kind} — ${shortenMiddle(detail.replace(/\s+/g, " ").trim(), 140)}` : kind;
+}
+
+function formatRecoveryDecision(action: string, ruleId: string | undefined, reason: string): string {
+  return `${action}${ruleId ? ` rule=${shortenMiddle(ruleId, 48)}` : ""} — ${shortenMiddle(reason.replace(/\s+/g, " ").trim(), 140)}`;
 }
 
 function formatSubagentIntegration(subagent: GoalSubagentRecord): string | undefined {

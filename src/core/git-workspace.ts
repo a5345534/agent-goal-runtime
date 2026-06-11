@@ -573,7 +573,43 @@ export function cleanupTerminalSubagentWorkspaces(
   state: GoalOrchestrationState,
   policy: NativeGitSubagentCleanupPolicy = {},
 ): NativeGitSubagentCleanupResult[] {
-  return state.subagents.map((subagent) => cleanupSubagentWorkspace(manager, subagent, policy));
+  return terminalCleanupTargets(state).map((subagent) => cleanupSubagentWorkspace(manager, subagent, policy));
+}
+
+function terminalCleanupTargets(state: GoalOrchestrationState): GoalSubagentRecord[] {
+  const nodesById = new Map(state.nodes.map((node) => [node.nodeId, node]));
+  const targets = state.subagents.map((subagent) => {
+    const resources = nodesById.get(subagent.nodeId)?.preparedResources;
+    if (!resources) return subagent;
+    return {
+      ...subagent,
+      workspacePath: subagent.workspacePath ?? resources.workspacePath,
+      branch: subagent.branch ?? resources.branch,
+      ref: subagent.ref ?? resources.ref,
+      sessionId: subagent.sessionId ?? resources.sessionId,
+      sessionFile: subagent.sessionFile ?? resources.sessionFile,
+    };
+  });
+
+  const byResource = new Map<string, GoalSubagentRecord[]>();
+  for (const target of targets) {
+    const key = target.workspacePath ? `workspace:${target.workspacePath}:${target.branch ?? ""}` : `subagent:${target.goalId}:${target.subagentId}`;
+    const group = byResource.get(key) ?? [];
+    group.push(target);
+    byResource.set(key, group);
+  }
+
+  return [...byResource.values()].map(selectCleanupRepresentative);
+}
+
+function selectCleanupRepresentative(group: GoalSubagentRecord[]): GoalSubagentRecord {
+  const completed = group.filter((subagent) => subagent.status === "complete").sort((a, b) => compareIsoDesc(a.updatedAt, b.updatedAt))[0];
+  if (completed) return completed;
+  return [...group].sort((a, b) => compareIsoDesc(a.updatedAt, b.updatedAt))[0]!;
+}
+
+function compareIsoDesc(left: string, right: string): number {
+  return right.localeCompare(left);
 }
 
 export function cleanupSubagentWorkspace(

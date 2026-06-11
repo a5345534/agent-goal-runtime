@@ -102,6 +102,37 @@ test("Opencode harness subagent adapter starts a detached opencode session and s
   }
 });
 
+test("Opencode harness subagent adapter honors controller-prepared resources", async () => {
+  const { launcher, launches } = fakeLauncher();
+  setOpencodeBackgroundSessionLauncherForTests(launcher);
+  try {
+    const adapter = new OpencodeHarnessSubagentAdapter({ modelArg: "fallback/model", now: () => new Date(now) });
+    const result = await adapter.startSession({
+      goalId: "goal-1",
+      node: node(),
+      subagentId: "subagent-1",
+      cwd: "/legacy/worktree",
+      branch: "legacy/branch",
+      initialPrompt: "create attendance doctypes",
+      preparedResources: {
+        workspacePath: "/repo/.worktrees/prepared",
+        branch: "goal/prepared",
+        sessionId: "ses_prepared",
+        modelArg: "prepared/model",
+      },
+    });
+
+    assert.equal(launches[0]?.cwd, "/repo/.worktrees/prepared");
+    assert.equal(launches[0]?.sessionID, "ses_prepared");
+    assert.equal(launches[0]?.modelArg, "prepared/model");
+    assert.equal(result.sessionId, "ses_prepared");
+    assert.equal(result.workspacePath, "/repo/.worktrees/prepared");
+    assert.equal(result.branch, "goal/prepared");
+  } finally {
+    setOpencodeBackgroundSessionLauncherForTests();
+  }
+});
+
 test("Opencode harness subagent adapter resumes an existing session for follow-up prompts", async () => {
   const { launcher, launches, prompts, stopped } = fakeLauncher();
   setOpencodeBackgroundSessionLauncherForTests(launcher);

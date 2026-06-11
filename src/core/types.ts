@@ -254,6 +254,80 @@ export type GoalDagNodeStatus =
   | "failed"
   | "superseded";
 
+export type GoalDagNodeLifecyclePhase =
+  | "acceptanceDefined"
+  | "resourcesCreating"
+  | "resourcesReady"
+  | "runnerStarting"
+  | "runnerActive"
+  | "controllerJudging"
+  | "validating"
+  | "integrating"
+  | "terminal";
+
+export type GoalSubagentObservationKind =
+  | "runnerStarting"
+  | "running"
+  | "idle"
+  | "selfReportedComplete"
+  | "selfReportedBlocked"
+  | "protocolViolation"
+  | "runnerError"
+  | "runnerLost"
+  | "stopped";
+
+export interface GoalNodePreparedResources {
+  subagentId?: string;
+  adapterId?: string;
+  workspacePath?: string;
+  branch?: string;
+  ref?: string;
+  sessionId?: string;
+  sessionFile?: string;
+  modelScenario?: string;
+  modelArg?: string;
+  thinkingLevel?: string;
+  metadata?: Record<string, unknown>;
+  supersededAt?: string;
+  supersededBy?: string;
+  supersessionReason?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface GoalAdapterObservationRecord {
+  adapterId: string;
+  kind: GoalSubagentObservationKind;
+  at: string;
+  summary?: string;
+  error?: string;
+  evidence?: Record<string, unknown>;
+}
+
+export type GoalRecoveryDecisionAction =
+  | "sendPromptToSameSession"
+  | "restartRunnerSameSession"
+  | "restartRunnerSameWorktreeNewSession"
+  | "markNodeBlocked"
+  | "askUser"
+  | "invokeControllerModel"
+  | "proposeRecoveryRule"
+  | "supersedeResourcesAndRestart"
+  | "delegateToLegacyRecovery";
+
+export interface GoalRecoveryDecisionRecord {
+  decisionId?: string;
+  action: GoalRecoveryDecisionAction;
+  reason: string;
+  at: string;
+  ruleId?: string;
+  confidence?: "low" | "medium" | "high";
+  prompt?: string;
+  retryCount?: number;
+  maxRetries?: number;
+  evidence?: Record<string, unknown>;
+}
+
 export interface GoalDagConflictHints {
   files?: string[];
   modules?: string[];
@@ -325,6 +399,14 @@ export interface GoalDagNode {
   conflictHints?: GoalDagConflictHints;
   completionGates: string[];
   status: GoalDagNodeStatus;
+  /** Detailed controller-owned execution lifecycle phase. Coarse status remains for compatibility. */
+  lifecyclePhase?: GoalDagNodeLifecyclePhase;
+  /** Controller-prepared branch/worktree/session/resource binding for this node. */
+  preparedResources?: GoalNodePreparedResources;
+  /** Last normalized adapter observation recorded for diagnostics/recovery. */
+  lastAdapterObservation?: GoalAdapterObservationRecord;
+  /** Last controller recovery decision recorded for abnormal observations. */
+  lastRecoveryDecision?: GoalRecoveryDecisionRecord;
   lastValidationSummary?: string;
   createdAt: string;
   updatedAt: string;
@@ -374,6 +456,10 @@ export interface GoalSubagentRecord {
   integrationCompletedAt?: string;
   /** Number of automatic retries attempted for this subagent. */
   retryCount?: number;
+  /** Last normalized adapter observation recorded for this subagent. */
+  lastAdapterObservation?: GoalAdapterObservationRecord;
+  /** Last controller recovery decision involving this subagent. */
+  lastRecoveryDecision?: GoalRecoveryDecisionRecord;
   createdAt: string;
   updatedAt: string;
 }

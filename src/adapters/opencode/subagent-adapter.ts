@@ -67,11 +67,11 @@ export class OpencodeHarnessSubagentAdapter implements HarnessSubagentAdapter {
 
   async startSession(request: HarnessSubagentStartRequest): Promise<HarnessSubagentStartResult> {
     const launch: OpencodeBackgroundSessionLaunchRequest = {
-      cwd: request.cwd ?? process.cwd(),
+      cwd: request.preparedResources?.workspacePath ?? request.cwd ?? process.cwd(),
       sessionTitle: subagentTitle(request),
-      modelArg: this.modelArg,
+      modelArg: request.preparedResources?.modelArg ?? this.modelArg,
     };
-    const resumeSessionID = readSessionIdFromMetadata(request.metadata);
+    const resumeSessionID = request.preparedResources?.sessionId ?? readSessionIdFromMetadata(request.metadata);
     if (resumeSessionID) launch.sessionID = resumeSessionID;
     const handle = await (await this.pickLauncher())(launch);
     this.handles.set(request.subagentId, handle);
@@ -79,9 +79,9 @@ export class OpencodeHarnessSubagentAdapter implements HarnessSubagentAdapter {
     return {
       sessionId: handle.sessionID,
       sessionFile: handle.serverUrl,
-      workspacePath: request.cwd,
-      branch: request.branch,
-      ref: request.ref,
+      workspacePath: request.preparedResources?.workspacePath ?? request.cwd,
+      branch: request.preparedResources?.branch ?? request.branch,
+      ref: request.preparedResources?.ref ?? request.ref,
       status: "running",
       lastActivityAt: this.now().toISOString(),
       metadata: { sessionTitle: launch.sessionTitle, serverUrl: handle.serverUrl },

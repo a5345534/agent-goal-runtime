@@ -752,7 +752,8 @@ test("Pi goal start can load an explicit DAG file", async () => {
         assert.match(notifications.at(-1) ?? "", /planned 2 DAG node\(s\); started 1 subagent\(s\)/);
         assert.match(notifications.at(-1) ?? "", /DAG:/);
         const dagNodes = mirrored.filter((entry) => entry.kind === "goal_dag_node");
-        assert.equal(dagNodes.length, 3);
+        assert.equal(dagNodes.length, 7);
+        assert.deepEqual(dagNodes.map((entry) => entry.node?.lifecyclePhase).filter(Boolean), ["acceptanceDefined", "resourcesCreating", "resourcesReady", "runnerStarting", "runnerActive"]);
     }
     finally {
         setPiBackgroundGoalSessionLauncherForTests();

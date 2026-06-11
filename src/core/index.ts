@@ -14,4 +14,6 @@ export * from "./dag-file.js";
 export * from "./dag-scheduler.js";
 export * from "./model-routing.js";
 export * from "./integration.js";
+export * from "./lifecycle.js";
+export * from "./exception-handler.js";
 export * from "./subagent-adapter.js";

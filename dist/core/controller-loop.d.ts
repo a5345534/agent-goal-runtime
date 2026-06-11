@@ -1,4 +1,5 @@
 import type { GoalDagSchedulingPolicy } from "./dag-scheduler.js";
+import type { ControllerExceptionHandler } from "./exception-handler.js";
 import type { HarnessSubagentAdapter, StartGoalSubagentOptions } from "./subagent-adapter.js";
 import type { GoalDagNode, GoalOrchestrationState, GoalSubagentRecord } from "./types.js";
 export interface GoalControllerRuntimePort {
@@ -89,6 +90,8 @@ export interface GoalControllerTickOptions {
     validator?: GoalControllerValidator;
     /** Integrates repository-changing subagent branches before node completion. */
     integrator?: GoalControllerIntegrator;
+    /** Handles abnormal adapter observations/recovery decisions outside the formal adapter path. */
+    exceptionHandler?: ControllerExceptionHandler;
     renderInitialPrompt?: (request: GoalControllerInitialPromptRequest) => string;
     maxStartsPerTick?: number;
     /** Maximum auto-retry attempts for transient subagent failures (default 2). */

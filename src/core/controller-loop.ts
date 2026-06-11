@@ -1,7 +1,10 @@
 import type { GoalDagSchedulingPolicy } from "./dag-scheduler.js";
+import type { ControllerExceptionHandler } from "./exception-handler.js";
+import { normalizeExceptionSignature } from "./exception-handler.js";
 import { nodeRequiresSubagentIntegration, requiredSubagentIntegrationTerminalSuccess } from "./integration.js";
+import { attachPreparedResourcesToNode, recordAdapterObservationOnNode, recordRecoveryDecisionOnNode, supersedePreparedResourcesOnNode, withGoalDagNodeLifecyclePhase } from "./lifecycle.js";
 import type { HarnessSubagentAdapter, StartGoalSubagentOptions } from "./subagent-adapter.js";
-import type { GoalDagNode, GoalOrchestrationState, GoalSubagentRecord } from "./types.js";
+import type { GoalAdapterObservationRecord, GoalDagNode, GoalNodePreparedResources, GoalOrchestrationState, GoalRecoveryDecisionRecord, GoalSubagentRecord } from "./types.js";
 
 export interface GoalControllerRuntimePort {
   getGoalOrchestrationState(goalId: string): Promise<GoalOrchestrationState>;
@@ -104,6 +107,8 @@ export interface GoalControllerTickOptions {
   validator?: GoalControllerValidator;
   /** Integrates repository-changing subagent branches before node completion. */
   integrator?: GoalControllerIntegrator;
+  /** Handles abnormal adapter observations/recovery decisions outside the formal adapter path. */
+  exceptionHandler?: ControllerExceptionHandler;
   renderInitialPrompt?: (request: GoalControllerInitialPromptRequest) => string;
   maxStartsPerTick?: number;
   /** Maximum auto-retry attempts for transient subagent failures (default 2). */
@@ -503,29 +508,46 @@ async function startReplacementSubagent(
   }, tickStartedAt);
   result.synced.push(terminalSubagent);
 
-  const allocation = subagent.workspacePath || subagent.branch || subagent.ref
-    ? undefined
-    : await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt });
   const replacementPrompt = behavior.prompt(node, errorMessage, retryCount, maxReplacementAttempts);
   const replacementSubagentId = uniqueReplacementSubagentId(state.subagents, subagent.subagentId, attempt);
-  const allocatedSubagentId = allocation?.subagentId && allocation.subagentId !== subagent.subagentId ? allocation.subagentId : undefined;
-  const startOptions: StartGoalSubagentOptions = {
-    subagentId: allocatedSubagentId ?? replacementSubagentId,
-    cwd: subagent.workspacePath ?? allocation?.cwd,
-    branch: subagent.branch ?? allocation?.branch,
-    ref: subagent.ref ?? allocation?.ref,
-    systemPrompt: allocation?.systemPrompt ?? options.systemPrompt,
-    initialPrompt: replacementPrompt,
+  const reusableResources = recoveryPreparedResources(node, subagent, tickStartedAt, {
+    subagentId: replacementSubagentId,
+    clearSession: true,
     metadata: {
-      ...(options.metadata ?? {}),
-      ...(allocation?.metadata ?? {}),
       staleReplacementFor: subagent.subagentId,
       staleReplacementMode: behavior.mode,
       staleReplacementReason: errorMessage,
       staleReplacementAttempt: attempt,
     },
+  });
+  const allocation = hasConcretePreparedResource(reusableResources)
+    ? undefined
+    : await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt });
+  const allocatedSubagentId = allocation?.subagentId && allocation.subagentId !== subagent.subagentId ? allocation.subagentId : undefined;
+  const effectiveSubagentId = allocatedSubagentId ?? replacementSubagentId;
+  const preparedResources: GoalNodePreparedResources = {
+    ...reusableResources,
+    subagentId: effectiveSubagentId,
+    adapterId: adapter.adapterId,
+    workspacePath: reusableResources.workspacePath ?? allocation?.cwd,
+    branch: reusableResources.branch ?? allocation?.branch,
+    ref: reusableResources.ref ?? allocation?.ref,
+    modelArg: typeof allocation?.metadata?.modelArg === "string" ? allocation.metadata.modelArg : reusableResources.modelArg,
+    modelScenario: typeof allocation?.metadata?.modelScenario === "string" ? allocation.metadata.modelScenario : reusableResources.modelScenario,
+    metadata: { ...(reusableResources.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+    updatedAt: tickStartedAt,
+  };
+  const startOptions: StartGoalSubagentOptions = {
+    subagentId: effectiveSubagentId,
+    cwd: preparedResources.workspacePath,
+    branch: preparedResources.branch,
+    ref: preparedResources.ref,
+    systemPrompt: allocation?.systemPrompt ?? options.systemPrompt,
+    initialPrompt: replacementPrompt,
+    preparedResources,
+    metadata: { ...(options.metadata ?? {}), ...(preparedResources.metadata ?? {}) },
     now: tickStartedAt,
-    thinkingLevel: node.thinkingLevel,
+    thinkingLevel: preparedResources.thinkingLevel ?? node.thinkingLevel,
   };
   const started = await runtime.startGoalSubagent(adapter, node, startOptions);
   const replacement = withSubagentPatch(started, {
@@ -535,11 +557,23 @@ async function startReplacementSubagent(
     updatedAt: tickStartedAt,
   });
   await runtime.saveGoalSubagent(replacement);
-  await runtime.saveGoalDagNode(withNodePatch(node, {
-    status: "running",
-    lastValidationSummary: `replacement subagent ${replacement.subagentId} started after ${behavior.mode} ${subagent.subagentId}`,
-    updatedAt: tickStartedAt,
-  }));
+  await runtime.saveGoalDagNode(withNodePatch(
+    attachPreparedResourcesToNode(node, {
+      ...preparedResources,
+      subagentId: replacement.subagentId,
+      sessionId: replacement.sessionId,
+      sessionFile: replacement.sessionFile,
+      workspacePath: replacement.workspacePath ?? preparedResources.workspacePath,
+      branch: replacement.branch ?? preparedResources.branch,
+      ref: replacement.ref ?? preparedResources.ref,
+    }, { phase: "runnerActive", now: tickStartedAt }),
+    {
+      status: "running",
+      lifecyclePhase: "runnerActive",
+      lastValidationSummary: `replacement subagent ${replacement.subagentId} started after ${behavior.mode} ${subagent.subagentId}`,
+      updatedAt: tickStartedAt,
+    },
+  ));
   await recordControllerEvent(runtime, subagent.goalId, "recovery.replacedStaleSession", {
     nodeId: node.nodeId,
     previousSubagentId: subagent.subagentId,
@@ -640,14 +674,34 @@ async function tryAutoRecoverFailedNode(
     node = { ...node, modelArg: fallback, thinkingLevel: "high" };
 
     const recoveryPrompt = buildContextUpgradePrompt(node, oldModel, fallback);
-    const allocation = await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt });
+    const replacementSubagentId = uniqueReplacementSubagentId(state.subagents, subagent.subagentId, retryCount + 1);
+    const reusableResources = recoveryPreparedResources(node, subagent, tickStartedAt, {
+      subagentId: replacementSubagentId,
+      clearSession: true,
+      modelArg: fallback,
+      thinkingLevel: "high",
+      metadata: { contextFallbackFrom: oldModel, contextFallbackTo: fallback, contextFallbackReason: errorMessage },
+    });
+    const allocation = hasConcretePreparedResource(reusableResources)
+      ? undefined
+      : await options.workspaceAllocator?.({ goalId: subagent.goalId, node, state, adapterId: adapter.adapterId, tickStartedAt });
+    const preparedResources: GoalNodePreparedResources = {
+      ...reusableResources,
+      subagentId: allocation?.subagentId ?? replacementSubagentId,
+      workspacePath: reusableResources.workspacePath ?? allocation?.cwd,
+      branch: reusableResources.branch ?? allocation?.branch,
+      ref: reusableResources.ref ?? allocation?.ref,
+      metadata: { ...(reusableResources.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+      updatedAt: tickStartedAt,
+    };
     const startOptions: StartGoalSubagentOptions = {
-      subagentId: allocation?.subagentId,
-      cwd: allocation?.cwd ?? subagent.workspacePath,
-      branch: allocation?.branch ?? subagent.branch,
-      ref: allocation?.ref ?? subagent.ref,
+      subagentId: preparedResources.subagentId,
+      cwd: preparedResources.workspacePath,
+      branch: preparedResources.branch,
+      ref: preparedResources.ref,
       initialPrompt: recoveryPrompt,
-      metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+      preparedResources,
+      metadata: { ...(options.metadata ?? {}), ...(preparedResources.metadata ?? {}) },
       now: tickStartedAt,
       thinkingLevel: "high",
     };
@@ -808,11 +862,19 @@ async function syncSubagents(
       const updated = await runtime.syncGoalSubagent(adapter, subagent);
       if (subagentChanged(subagent, updated)) {
         result.synced.push(updated);
+        const node = state.nodes.find((item) => item.nodeId === updated.nodeId);
+        if (node && updated.lastAdapterObservation) {
+          await runtime.saveGoalDagNode(recordAdapterObservationOnNode(node, updated.lastAdapterObservation, {
+            phase: lifecyclePhaseForObservation(updated.lastAdapterObservation),
+            now: tickStartedAt,
+          }));
+        }
         await recordControllerEvent(runtime, updated.goalId, controllerEventForSyncedSubagent(updated), {
           nodeId: updated.nodeId,
           subagentId: updated.subagentId,
           from: subagent.status,
           to: updated.status,
+          observation: updated.lastAdapterObservation?.kind,
           summary: updated.selfReportedResult ?? updated.integrationStatus,
         }, tickStartedAt);
       }
@@ -867,6 +929,8 @@ async function reconcileSubagentOutcomes(
     if (!node) continue;
 
     if (subagent.status === "blocked") {
+      const handled = await tryHandleAbnormalObservation(runtime, options, state, node, subagent, result, tickStartedAt, subagent.lastAdapterObservation ?? observationFromSubagentStatus(options.adapter.adapterId, subagent, "selfReportedBlocked", tickStartedAt));
+      if (handled) continue;
       const recovered = await tryRecoverBlockedSubagent(runtime, options, state, node, subagent, result, tickStartedAt);
       if (recovered) continue;
       const blockedNode = withNodePatch(node, { status: "blocked", lastValidationSummary: subagent.selfReportedResult ?? subagent.integrationStatus });
@@ -877,6 +941,8 @@ async function reconcileSubagentOutcomes(
 
     if (subagent.status === "failed") {
       const state = await runtime.getGoalOrchestrationState(goalId);
+      const handled = await tryHandleAbnormalObservation(runtime, options, state, node, subagent, result, tickStartedAt, subagent.lastAdapterObservation ?? observationFromSubagentStatus(options.adapter.adapterId, subagent, "runnerError", tickStartedAt));
+      if (handled) continue;
       try {
         const recovered = await tryAutoRecoverFailedNode(runtime, options.adapter, node, subagent, state, result, options, tickStartedAt);
         if (recovered) continue;
@@ -902,6 +968,8 @@ async function reconcileSubagentOutcomes(
     }
 
     if (subagent.status === "needsFollowup") {
+      const handled = await tryHandleAbnormalObservation(runtime, options, state, node, subagent, result, tickStartedAt, subagent.lastAdapterObservation ?? observationFromSubagentStatus(options.adapter.adapterId, subagent, "protocolViolation", tickStartedAt));
+      if (handled) continue;
       const followupPrompt = buildSubagentFollowupPrompt(node, subagent);
       const followed = await runtime.sendGoalSubagentPrompt(options.adapter, subagent, followupPrompt, {
         metadata: options.metadata,
@@ -916,7 +984,7 @@ async function reconcileSubagentOutcomes(
     }
 
     if (subagent.status === "selfReportedComplete" || (subagent.status === "complete" && node.status !== "complete")) {
-      await validateOrHold(runtime, options, state, node, subagent, result, tickStartedAt);
+      await validateOrHold(runtime, options, state, withGoalDagNodeLifecyclePhase(node, "controllerJudging", { status: "controllerValidating", now: tickStartedAt }), subagent, result, tickStartedAt);
       continue;
     }
 
@@ -924,6 +992,345 @@ async function reconcileSubagentOutcomes(
       await runtime.saveGoalDagNode(withNodePatch(node, { status: "running" }));
     }
   }
+}
+
+async function tryHandleAbnormalObservation(
+  runtime: GoalControllerRuntimePort,
+  options: GoalControllerTickOptions,
+  state: GoalOrchestrationState,
+  node: GoalDagNode,
+  subagent: GoalSubagentRecord,
+  result: GoalControllerTickResult,
+  tickStartedAt: string,
+  observation: GoalAdapterObservationRecord,
+): Promise<boolean> {
+  if (!options.exceptionHandler) return false;
+  const decision = await options.exceptionHandler({
+    goalId: node.goalId,
+    node,
+    subagent,
+    resources: node.preparedResources,
+    observation,
+    recentMatchingFailures: countMatchingAbnormalObservations(state, observation),
+    previousDecisions: previousRecoveryDecisionsForNode(state, node.nodeId),
+    retryCount: subagent.retryCount ?? 0,
+    maxRetries: options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT,
+    now: tickStartedAt,
+  });
+  await recordControllerEvent(runtime, node.goalId, "exception.decision", {
+    nodeId: node.nodeId,
+    subagentId: subagent.subagentId,
+    observation: observation.kind,
+    action: decision.action,
+    reason: decision.reason,
+    ruleId: decision.ruleId,
+    confidence: decision.confidence,
+  }, tickStartedAt);
+
+  const nodeWithDecision = recordRecoveryDecisionOnNode(node, decision, { phase: "controllerJudging", now: tickStartedAt });
+  const subagentWithDecision = withSubagentPatch(subagent, { lastRecoveryDecision: decision, integrationStatus: decision.reason, updatedAt: tickStartedAt });
+
+  if (decision.action === "delegateToLegacyRecovery") {
+    await runtime.saveGoalDagNode(nodeWithDecision);
+    await runtime.saveGoalSubagent(subagentWithDecision);
+    result.synced.push(subagentWithDecision);
+    return false;
+  }
+
+  if (decision.action === "sendPromptToSameSession" || decision.action === "restartRunnerSameSession") {
+    const prompt = decision.prompt ?? buildSameSessionRecoveryPrompt(node, decision);
+    const followed = await runtime.sendGoalSubagentPrompt(options.adapter, subagentWithDecision, prompt, {
+      metadata: options.metadata,
+      now: tickStartedAt,
+    });
+    const runningSubagent = withSubagentPatch(followed, {
+      status: "running",
+      lastRecoveryDecision: decision,
+      integrationStatus: decision.reason,
+      retryCount: (subagent.retryCount ?? 0) + 1,
+      lastActivityAt: tickStartedAt,
+      updatedAt: tickStartedAt,
+    });
+    const runningNode = withGoalDagNodeLifecyclePhase(
+      recordRecoveryDecisionOnNode(nodeWithDecision, decision, { phase: "runnerActive", status: "running", now: tickStartedAt }),
+      "runnerActive",
+      { status: "running", now: tickStartedAt },
+    );
+    await runtime.saveGoalSubagent(runningSubagent);
+    await runtime.saveGoalDagNode(runningNode);
+    result.followups.push(runningSubagent);
+    result.synced.push(runningSubagent);
+    return true;
+  }
+
+  if (decision.action === "restartRunnerSameWorktreeNewSession") {
+    return startRecoverySubagentOnSameResources(runtime, options, state, nodeWithDecision, subagentWithDecision, result, tickStartedAt, decision);
+  }
+
+  if (decision.action === "supersedeResourcesAndRestart") {
+    return startRecoverySubagentWithSupersededResources(runtime, options, state, nodeWithDecision, subagentWithDecision, result, tickStartedAt, decision);
+  }
+
+  if (decision.action === "markNodeBlocked" || decision.action === "askUser" || decision.action === "proposeRecoveryRule") {
+    const blockedSubagent = withSubagentPatch(subagentWithDecision, { status: "blocked", integrationStatus: decision.reason, updatedAt: tickStartedAt });
+    const blockedNode = recordRecoveryDecisionOnNode(nodeWithDecision, decision, { phase: "terminal", status: "blocked", now: tickStartedAt });
+    await runtime.saveGoalSubagent(blockedSubagent);
+    await runtime.saveGoalDagNode(blockedNode);
+    result.blocked.push(blockedNode);
+    result.synced.push(blockedSubagent);
+    return true;
+  }
+
+  // invokeControllerModel is a durable diagnostic decision. If the handler did
+  // not translate it into a concrete bounded action, preserve compatibility by
+  // falling back to the legacy recovery branch after persisting the decision.
+  await runtime.saveGoalDagNode(nodeWithDecision);
+  await runtime.saveGoalSubagent(subagentWithDecision);
+  result.synced.push(subagentWithDecision);
+  return false;
+}
+
+function countMatchingAbnormalObservations(state: GoalOrchestrationState, observation: GoalAdapterObservationRecord): number {
+  const signature = normalizeExceptionSignature(observation);
+  const observations = [
+    ...state.nodes.map((node) => node.lastAdapterObservation),
+    ...state.subagents.map((subagent) => subagent.lastAdapterObservation),
+    observation,
+  ].filter((item): item is GoalAdapterObservationRecord => Boolean(item));
+  const unique = new Set<string>();
+  for (const item of observations) {
+    if (normalizeExceptionSignature(item) === signature) unique.add(`${item.adapterId}:${item.kind}:${item.at}:${item.error ?? item.summary ?? ""}`);
+  }
+  return unique.size;
+}
+
+function previousRecoveryDecisionsForNode(state: GoalOrchestrationState, nodeId: string): GoalRecoveryDecisionRecord[] {
+  return [
+    ...state.nodes.filter((node) => node.nodeId === nodeId).map((node) => node.lastRecoveryDecision),
+    ...state.subagents.filter((subagent) => subagent.nodeId === nodeId).map((subagent) => subagent.lastRecoveryDecision),
+  ].filter((item): item is GoalRecoveryDecisionRecord => Boolean(item));
+}
+
+function buildSameSessionRecoveryPrompt(node: GoalDagNode, decision: GoalRecoveryDecisionRecord): string {
+  return [
+    `[SYSTEM RECOVERY: ${decision.action}]`,
+    `The controller is preserving this subagent session and prepared workspace.`,
+    `Observed issue: ${decision.reason}`,
+    `Continue the DAG node objective: "${node.objective}"`,
+    `When done, report exactly: SUBAGENT_RESULT: <summary of changes, verification, and remaining risks>`,
+    `If blocked, report exactly: SUBAGENT_BLOCKED: <specific blocker and needed input/state change>`,
+  ].join("\n");
+}
+
+async function startRecoverySubagentOnSameResources(
+  runtime: GoalControllerRuntimePort,
+  options: GoalControllerTickOptions,
+  state: GoalOrchestrationState,
+  node: GoalDagNode,
+  subagent: GoalSubagentRecord,
+  result: GoalControllerTickResult,
+  tickStartedAt: string,
+  decision: GoalRecoveryDecisionRecord,
+): Promise<boolean> {
+  const retryCount = (subagent.retryCount ?? 0) + 1;
+  const replacementSubagentId = uniqueReplacementSubagentId(state.subagents, subagent.subagentId, retryCount);
+  const resources = recoveryPreparedResources(node, subagent, tickStartedAt, {
+    subagentId: replacementSubagentId,
+    clearSession: true,
+    metadata: {
+      recoveryAction: decision.action,
+      recoveryFor: subagent.subagentId,
+      previousSessionId: subagent.sessionId,
+      previousSessionFile: subagent.sessionFile,
+      recoveryReason: decision.reason,
+    },
+  });
+  if (!resources.workspacePath && !resources.branch && !resources.ref) {
+    const blockedSubagent = withSubagentPatch(subagent, { status: "blocked", integrationStatus: `cannot restart on same resources: no prepared worktree/branch/ref. ${decision.reason}` });
+    const blockedNode = recordRecoveryDecisionOnNode(node, decision, { phase: "terminal", status: "blocked", now: tickStartedAt });
+    await runtime.saveGoalSubagent(blockedSubagent);
+    await runtime.saveGoalDagNode(blockedNode);
+    result.blocked.push(blockedNode);
+    result.synced.push(blockedSubagent);
+    return true;
+  }
+
+  const terminalSubagent = withSubagentPatch(subagent, {
+    status: "failed",
+    integrationStatus: `replaced by ${replacementSubagentId}: ${decision.reason}`,
+    retryCount,
+    lastRecoveryDecision: decision,
+    updatedAt: tickStartedAt,
+  });
+  await runtime.saveGoalSubagent(terminalSubagent);
+  const started = await runtime.startGoalSubagent(options.adapter, node, {
+    subagentId: replacementSubagentId,
+    cwd: resources.workspacePath,
+    branch: resources.branch,
+    ref: resources.ref,
+    systemPrompt: options.systemPrompt,
+    initialPrompt: decision.prompt ?? buildNewSessionSameWorktreePrompt(node, subagent, decision, retryCount, decision.maxRetries ?? options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT),
+    preparedResources: resources,
+    metadata: { ...(options.metadata ?? {}), ...(resources.metadata ?? {}) },
+    now: tickStartedAt,
+    thinkingLevel: resources.thinkingLevel ?? node.thinkingLevel,
+  });
+  const replacement = withSubagentPatch(started, {
+    retryCount,
+    lastRecoveryDecision: decision,
+    integrationStatus: `same-resource recovery ${retryCount}/${decision.maxRetries ?? options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT}: ${decision.reason}`,
+    lastActivityAt: tickStartedAt,
+    updatedAt: tickStartedAt,
+  });
+  await runtime.saveGoalSubagent(replacement);
+  await recordControllerEvent(runtime, node.goalId, "recovery.sameResourcesStarted", {
+    nodeId: node.nodeId,
+    previousSubagentId: subagent.subagentId,
+    subagentId: replacement.subagentId,
+    action: decision.action,
+    workspacePath: replacement.workspacePath,
+    branch: replacement.branch,
+    ruleId: decision.ruleId,
+    reason: decision.reason,
+  }, tickStartedAt);
+  result.synced.push(terminalSubagent);
+  result.started.push(replacement);
+  return true;
+}
+
+async function startRecoverySubagentWithSupersededResources(
+  runtime: GoalControllerRuntimePort,
+  options: GoalControllerTickOptions,
+  state: GoalOrchestrationState,
+  node: GoalDagNode,
+  subagent: GoalSubagentRecord,
+  result: GoalControllerTickResult,
+  tickStartedAt: string,
+  decision: GoalRecoveryDecisionRecord,
+): Promise<boolean> {
+  if (!options.workspaceAllocator) {
+    const summary = `cannot supersede resources without a controller workspace allocator: ${decision.reason}`;
+    const blockedSubagent = withSubagentPatch(subagent, { status: "blocked", integrationStatus: summary, lastRecoveryDecision: decision });
+    const blockedNode = recordRecoveryDecisionOnNode(node, decision, { phase: "terminal", status: "blocked", now: tickStartedAt });
+    await runtime.saveGoalSubagent(blockedSubagent);
+    await runtime.saveGoalDagNode(blockedNode);
+    result.blocked.push(blockedNode);
+    result.synced.push(blockedSubagent);
+    return true;
+  }
+  const retryCount = (subagent.retryCount ?? 0) + 1;
+  const allocation = await options.workspaceAllocator({ goalId: node.goalId, node, state, adapterId: options.adapter.adapterId, tickStartedAt });
+  const replacementSubagentId = allocation?.subagentId ?? uniqueReplacementSubagentId(state.subagents, subagent.subagentId, retryCount);
+  const resources: GoalNodePreparedResources = {
+    subagentId: replacementSubagentId,
+    adapterId: options.adapter.adapterId,
+    workspacePath: allocation?.cwd,
+    branch: allocation?.branch,
+    ref: allocation?.ref,
+    modelArg: typeof allocation?.metadata?.modelArg === "string" ? allocation.metadata.modelArg : node.preparedResources?.modelArg ?? node.modelArg,
+    modelScenario: typeof allocation?.metadata?.modelScenario === "string" ? allocation.metadata.modelScenario : node.preparedResources?.modelScenario ?? node.modelScenario,
+    thinkingLevel: node.thinkingLevel,
+    metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}), recoveryAction: decision.action, recoveryFor: subagent.subagentId },
+    createdAt: tickStartedAt,
+    updatedAt: tickStartedAt,
+  };
+  const supersededNode = supersedePreparedResourcesOnNode(node, resources, {
+    phase: "resourcesReady",
+    reason: decision.reason,
+    supersededBy: replacementSubagentId,
+    now: tickStartedAt,
+  });
+  await runtime.saveGoalDagNode(withGoalDagNodeLifecyclePhase(supersededNode, "runnerStarting", { status: "running", now: tickStartedAt }));
+  const terminalSubagent = withSubagentPatch(subagent, {
+    status: "failed",
+    integrationStatus: `resources superseded by ${replacementSubagentId}: ${decision.reason}`,
+    retryCount,
+    lastRecoveryDecision: decision,
+  });
+  await runtime.saveGoalSubagent(terminalSubagent);
+  const started = await runtime.startGoalSubagent(options.adapter, supersededNode, {
+    subagentId: replacementSubagentId,
+    cwd: resources.workspacePath,
+    branch: resources.branch,
+    ref: resources.ref,
+    systemPrompt: allocation?.systemPrompt ?? options.systemPrompt,
+    initialPrompt: decision.prompt ?? allocation?.initialPrompt ?? buildNewSessionSameWorktreePrompt(node, subagent, decision, retryCount, decision.maxRetries ?? options.maxAutoRetries ?? MAX_AUTO_RETRIES_DEFAULT),
+    preparedResources: resources,
+    metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+    now: tickStartedAt,
+    thinkingLevel: node.thinkingLevel,
+  });
+  const replacement = withSubagentPatch(started, {
+    retryCount,
+    lastRecoveryDecision: decision,
+    integrationStatus: `superseded-resource recovery ${retryCount}: ${decision.reason}`,
+    lastActivityAt: tickStartedAt,
+    updatedAt: tickStartedAt,
+  });
+  await runtime.saveGoalSubagent(replacement);
+  await recordControllerEvent(runtime, node.goalId, "recovery.resourcesSuperseded", {
+    nodeId: node.nodeId,
+    previousSubagentId: subagent.subagentId,
+    subagentId: replacement.subagentId,
+    workspacePath: replacement.workspacePath,
+    branch: replacement.branch,
+    ruleId: decision.ruleId,
+    reason: decision.reason,
+  }, tickStartedAt);
+  result.synced.push(terminalSubagent);
+  result.started.push(replacement);
+  return true;
+}
+
+function buildNewSessionSameWorktreePrompt(
+  node: GoalDagNode,
+  previous: GoalSubagentRecord,
+  decision: GoalRecoveryDecisionRecord,
+  retryCount: number,
+  maxRetries: number,
+): string {
+  return [
+    `[SYSTEM RECOVERY: ${decision.action}]`,
+    `The previous runner/session for ${previous.subagentId} is not reusable, but the controller is preserving the same prepared worktree and branch.`,
+    `Observed issue: ${decision.reason}`,
+    `First inspect current workspace state only as needed (for example git status/diff and relevant files).`,
+    `Then continue the DAG node objective: "${node.objective}"`,
+    node.scope ? `Scope: ${node.scope}` : undefined,
+    node.expectedOutputs.length ? `Expected outputs: ${node.expectedOutputs.join(", ")}` : undefined,
+    node.validators.length ? `Validators: ${node.validators.join(", ")}` : undefined,
+    `When done, report exactly: SUBAGENT_RESULT: <summary of changes, verification, and remaining risks>`,
+    `If blocked, report exactly: SUBAGENT_BLOCKED: <specific blocker and needed input/state change>`,
+    `Recovery attempt ${retryCount}/${maxRetries}.`,
+  ].filter((line): line is string => Boolean(line)).join("\n");
+}
+
+function recoveryPreparedResources(
+  node: GoalDagNode,
+  subagent: GoalSubagentRecord,
+  now: string,
+  options: { subagentId?: string; clearSession?: boolean; metadata?: Record<string, unknown>; modelArg?: string; thinkingLevel?: string } = {},
+): GoalNodePreparedResources {
+  const base = node.preparedResources ?? {};
+  return {
+    ...base,
+    subagentId: options.subagentId ?? base.subagentId ?? subagent.subagentId,
+    adapterId: base.adapterId ?? subagent.harnessAdapterId,
+    workspacePath: base.workspacePath ?? subagent.workspacePath,
+    branch: base.branch ?? subagent.branch,
+    ref: base.ref ?? subagent.ref,
+    sessionId: options.clearSession ? undefined : base.sessionId ?? subagent.sessionId,
+    sessionFile: options.clearSession ? undefined : base.sessionFile ?? subagent.sessionFile,
+    modelArg: options.modelArg ?? base.modelArg ?? node.modelArg,
+    modelScenario: base.modelScenario ?? node.modelScenario,
+    thinkingLevel: options.thinkingLevel ?? base.thinkingLevel ?? node.thinkingLevel,
+    metadata: { ...(base.metadata ?? {}), ...(options.metadata ?? {}) },
+    createdAt: base.createdAt ?? subagent.createdAt,
+    updatedAt: now,
+  };
+}
+
+function hasConcretePreparedResource(resources: GoalNodePreparedResources): boolean {
+  return Boolean(resources.workspacePath || resources.branch || resources.ref || resources.sessionId || resources.sessionFile);
 }
 
 async function tryRecoverBlockedSubagent(
@@ -998,7 +1405,7 @@ async function validateOrHold(
   result: GoalControllerTickResult,
   tickStartedAt: string,
 ): Promise<void> {
-  const validatingNode = withNodePatch(node, { status: "controllerValidating" });
+  const validatingNode = withNodePatch(node, { status: "controllerValidating", lifecyclePhase: "validating" });
   const validatingSubagent = withSubagentPatch(subagent, { status: "controllerValidating" });
   await runtime.saveGoalDagNode(validatingNode);
   await runtime.saveGoalSubagent(validatingSubagent);
@@ -1142,6 +1549,8 @@ async function integrateOrCompleteValidatedSubagent(
     return;
   }
 
+  const integratingNode = withNodePatch(node, { lifecyclePhase: "integrating", status: "controllerValidating" });
+  await runtime.saveGoalDagNode(integratingNode);
   const integratingSubagent = withSubagentPatch(subagent, {
     integrationState: "integrating",
     integrationStatus: "integrating subagent branch into controller workspace",
@@ -1156,7 +1565,7 @@ async function integrateOrCompleteValidatedSubagent(
 
   const integration = await options.integrator({
     goalId: node.goalId,
-    node,
+    node: integratingNode,
     subagent: integratingSubagent,
     state,
     validationSummary,
@@ -1184,7 +1593,7 @@ async function integrateOrCompleteValidatedSubagent(
       sourceHead: integration.sourceHead,
       integrationCommitSha: integration.integrationCommitSha,
     }, tickStartedAt);
-    await completeValidatedSubagent(runtime, node, withSubagentPatch(integratingSubagent, {
+    await completeValidatedSubagent(runtime, integratingNode, withSubagentPatch(integratingSubagent, {
       ...integrationPatch,
       integrationState: integration.status === "complete" ? "complete" : "not-required",
     }), result, appendSummary(validationSummary, integrationSummary));
@@ -1209,7 +1618,7 @@ async function integrateOrCompleteValidatedSubagent(
       integrationStatus: integrationSummary,
       integrationError: integration.error ?? integrationSummary,
     });
-    const runningNode = withNodePatch(node, { status: "running", lastValidationSummary: appendSummary(validationSummary, `integration follow-up required: ${integrationSummary}`) });
+    const runningNode = withNodePatch(integratingNode, { status: "running", lifecyclePhase: "runnerActive", lastValidationSummary: appendSummary(validationSummary, `integration follow-up required: ${integrationSummary}`) });
     await runtime.saveGoalSubagent(runningSubagent);
     await runtime.saveGoalDagNode(runningNode);
     await recordControllerEvent(runtime, node.goalId, "integration.followup", {
@@ -1222,7 +1631,7 @@ async function integrateOrCompleteValidatedSubagent(
     return;
   }
 
-  const blockedNode = withNodePatch(node, { status: "blocked", lastValidationSummary: appendSummary(validationSummary, `integration failed: ${integrationSummary}`) });
+  const blockedNode = withNodePatch(integratingNode, { status: "blocked", lifecyclePhase: "terminal", lastValidationSummary: appendSummary(validationSummary, `integration failed: ${integrationSummary}`) });
   const blockedSubagent = withSubagentPatch(failedSubagent, { status: "blocked" });
   await runtime.saveGoalDagNode(blockedNode);
   await runtime.saveGoalSubagent(blockedSubagent);
@@ -1243,7 +1652,7 @@ async function completeValidatedSubagent(
   validationSummary?: string,
   subagentPatch: Partial<GoalSubagentRecord> = {},
 ): Promise<void> {
-  const completedNode = withNodePatch(node, { status: "complete", lastValidationSummary: validationSummary });
+  const completedNode = withNodePatch(node, { status: "complete", lifecyclePhase: "terminal", lastValidationSummary: validationSummary });
   const completedSubagent = withSubagentPatch(subagent, { ...subagentPatch, status: "complete" });
   await runtime.saveGoalDagNode(completedNode);
   await runtime.saveGoalSubagent(completedSubagent);
@@ -1278,7 +1687,28 @@ async function startReadyNodes(
   for (const node of queue.ready) {
     if (started >= maxStarts) break;
     if (hasNonTerminalSubagentForNode(state.subagents, node.nodeId)) continue;
-    const allocation = await options.workspaceAllocator?.({ goalId, node, state, adapterId: options.adapter.adapterId, tickStartedAt });
+    let lifecycleNode = withGoalDagNodeLifecyclePhase(node, "acceptanceDefined", { status: "ready", now: tickStartedAt });
+    await runtime.saveGoalDagNode(lifecycleNode);
+    lifecycleNode = withGoalDagNodeLifecyclePhase(lifecycleNode, "resourcesCreating", { status: "running", now: tickStartedAt });
+    await runtime.saveGoalDagNode(lifecycleNode);
+    const allocation = await options.workspaceAllocator?.({ goalId, node: lifecycleNode, state, adapterId: options.adapter.adapterId, tickStartedAt });
+    const preparedResources: GoalNodePreparedResources = {
+      subagentId: allocation?.subagentId,
+      adapterId: options.adapter.adapterId,
+      workspacePath: allocation?.cwd,
+      branch: allocation?.branch,
+      ref: allocation?.ref,
+      modelArg: typeof allocation?.metadata?.modelArg === "string" ? allocation.metadata.modelArg : typeof options.metadata?.modelArg === "string" ? options.metadata.modelArg : node.modelArg,
+      modelScenario: typeof allocation?.metadata?.modelScenario === "string" ? allocation.metadata.modelScenario : typeof options.metadata?.modelScenario === "string" ? options.metadata.modelScenario : node.modelScenario,
+      thinkingLevel: node.thinkingLevel,
+      metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
+      createdAt: tickStartedAt,
+      updatedAt: tickStartedAt,
+    };
+    lifecycleNode = attachPreparedResourcesToNode(lifecycleNode, preparedResources, { phase: "resourcesReady", now: tickStartedAt });
+    await runtime.saveGoalDagNode(lifecycleNode);
+    lifecycleNode = withGoalDagNodeLifecyclePhase(lifecycleNode, "runnerStarting", { status: "running", now: tickStartedAt });
+    await runtime.saveGoalDagNode(lifecycleNode);
     const startOptions: StartGoalSubagentOptions = {
       subagentId: allocation?.subagentId,
       cwd: allocation?.cwd,
@@ -1286,11 +1716,12 @@ async function startReadyNodes(
       ref: allocation?.ref,
       systemPrompt: allocation?.systemPrompt ?? options.systemPrompt,
       initialPrompt: allocation?.initialPrompt ?? options.renderInitialPrompt?.({ goalId, node, state }) ?? renderDefaultInitialPrompt(node),
+      preparedResources,
       metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
       now: tickStartedAt,
       thinkingLevel: node.thinkingLevel,
     };
-    const subagent = await runtime.startGoalSubagent(options.adapter, node, startOptions);
+    const subagent = await runtime.startGoalSubagent(options.adapter, lifecycleNode, startOptions);
     await recordControllerEvent(runtime, goalId, "node.started", {
       nodeId: node.nodeId,
       subagentId: subagent.subagentId,
@@ -1315,6 +1746,39 @@ function latestSubagentPerNode(subagents: GoalSubagentRecord[]): GoalSubagentRec
 
 function hasNonTerminalSubagentForNode(subagents: GoalSubagentRecord[], nodeId: string): boolean {
   return subagents.some((subagent) => subagent.nodeId === nodeId && NON_TERMINAL_SUBAGENT_STATUSES.has(subagent.status));
+}
+
+function lifecyclePhaseForObservation(observation: GoalAdapterObservationRecord): GoalDagNode["lifecyclePhase"] {
+  switch (observation.kind) {
+    case "runnerStarting":
+      return "runnerStarting";
+    case "running":
+    case "idle":
+      return "runnerActive";
+    case "selfReportedComplete":
+    case "selfReportedBlocked":
+    case "protocolViolation":
+    case "runnerError":
+    case "runnerLost":
+    case "stopped":
+      return "controllerJudging";
+  }
+}
+
+function observationFromSubagentStatus(
+  adapterId: string,
+  subagent: GoalSubagentRecord,
+  kind: GoalAdapterObservationRecord["kind"],
+  at: string,
+): GoalAdapterObservationRecord {
+  return {
+    adapterId,
+    kind,
+    at,
+    summary: subagent.selfReportedResult,
+    error: subagent.integrationStatus,
+    evidence: { status: subagent.status, retryCount: subagent.retryCount },
+  };
 }
 
 function controllerEventForSyncedSubagent(subagent: GoalSubagentRecord): string {

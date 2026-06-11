@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "changeName": "standardize-controller-owned-subagent-lifecycle",
+  "generatedAt": "2026-06-11T14:06:35.474106+00:00",
+  "sources": [
+    {
+      "path": "proposal.md",
+      "kind": "proposal",
+      "sha256": "783bbe791a5bc2942e77ba2471522e5a48d913b95e720bbc0796ffa61942797b"
+    },
+    {
+      "path": "design.md",
+      "kind": "design",
+      "sha256": "2076afda21b24593653603a0e48f55302ad1e95d00be973cfac306852a371ddc"
+    },
+    {
+      "path": "tasks.md",
+      "kind": "tasks",
+      "sha256": "c0423a6b7d78a45b534320428a5f486749b3b87deffcd30fd864f9a62bfaf9aa"
+    },
+    {
+      "path": "specs/controller-subagent-lifecycle/spec.md",
+      "kind": "spec-delta",
+      "sha256": "84c3d27d5ad85a06eb7a68fcca96ad03e20732d9d4c25beed3f34963fd6c3466"
+    }
+  ]
+}

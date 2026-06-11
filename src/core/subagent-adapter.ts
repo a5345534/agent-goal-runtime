@@ -1,4 +1,5 @@
-import type { GoalDagNode, GoalSubagentRecord, GoalSubagentStatus } from "./types.js";
+import { adapterObservationFromHarnessState } from "./lifecycle.js";
+import type { GoalDagNode, GoalNodePreparedResources, GoalSubagentRecord, GoalSubagentStatus } from "./types.js";
 
 export type HarnessSubagentSessionStatus =
   | "starting"
@@ -19,6 +20,8 @@ export interface HarnessSubagentStartRequest {
   ref?: string;
   systemPrompt?: string;
   initialPrompt: string;
+  /** Controller-prepared resources. Legacy adapters may ignore this while honoring cwd/branch/ref/session fields. */
+  preparedResources?: GoalNodePreparedResources;
   metadata?: Record<string, unknown>;
 }
 
@@ -99,6 +102,7 @@ export interface StartGoalSubagentOptions {
   ref?: string;
   systemPrompt?: string;
   initialPrompt: string;
+  preparedResources?: GoalNodePreparedResources;
   metadata?: Record<string, unknown>;
   now?: Date | string;
   /** Pi thinking level for the subagent session (off|minimal|low|medium|high|xhigh). */
@@ -126,6 +130,7 @@ export async function startGoalSubagent(
     ref: options.ref,
     systemPrompt: options.systemPrompt,
     initialPrompt: options.initialPrompt,
+    preparedResources: options.preparedResources,
     metadata: { ...(options.metadata ?? {}), ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}) },
   });
 
@@ -140,7 +145,7 @@ export async function startGoalSubagent(
     branch: startResult.branch ?? options.branch,
     ref: startResult.ref ?? options.ref,
     status: mapHarnessStatusToSubagentStatus(startResult.status ?? "starting"),
-    integrationState: options.cwd || options.branch || options.ref ? "pending" : undefined,
+    integrationState: options.cwd || options.branch || options.ref || options.preparedResources ? "pending" : undefined,
     prompts: [options.initialPrompt],
     lastActivityAt: startResult.lastActivityAt ?? startedAt,
     createdAt: startedAt,
@@ -173,6 +178,7 @@ export async function syncGoalSubagentState(
 ): Promise<GoalSubagentRecord> {
   const state = await adapter.getSessionState({ subagent, metadata: options.metadata });
   const now = toIso(options.now ?? new Date());
+  const observation = adapterObservationFromHarnessState(adapter.adapterId, state, { at: now });
   const controllerValidationResults = state.validationSignals?.length
     ? [...(subagent.controllerValidationResults ?? []), ...state.validationSignals]
     : subagent.controllerValidationResults;
@@ -183,6 +189,7 @@ export async function syncGoalSubagentState(
     selfReportedResult: state.selfReportedResult ?? subagent.selfReportedResult,
     controllerValidationResults,
     integrationStatus: state.error,
+    lastAdapterObservation: observation,
     updatedAt: now,
   };
 }

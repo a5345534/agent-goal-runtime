@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import goalPiExtension, { setPiBackgroundGoalSessionLauncherForTests } from "../adapters/pi/index.js";
+import type { GoalDagNode } from "../core/index.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -746,7 +747,11 @@ test("Pi goal start can load an explicit DAG file", async () => {
     assert.match(notifications.at(-1) ?? "", /planned 2 DAG node\(s\); started 1 subagent\(s\)/);
     assert.match(notifications.at(-1) ?? "", /DAG:/);
     const dagNodes = mirrored.filter((entry) => entry.kind === "goal_dag_node");
-    assert.equal(dagNodes.length, 3);
+    assert.equal(dagNodes.length, 7);
+    assert.deepEqual(
+      dagNodes.map((entry) => (entry.node as GoalDagNode | undefined)?.lifecyclePhase).filter(Boolean),
+      ["acceptanceDefined", "resourcesCreating", "resourcesReady", "runnerStarting", "runnerActive"],
+    );
   } finally {
     setPiBackgroundGoalSessionLauncherForTests();
     if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;

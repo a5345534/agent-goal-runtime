@@ -4,6 +4,7 @@ import { createGoalDagNodesFromObjective, } from "./dag-planner.js";
 import { createGoalDagNodesFromFileDocument } from "./dag-file.js";
 import { createGoalDagNodes, getGoalDagReadyQueue as computeGoalDagReadyQueue, } from "./dag-scheduler.js";
 import { findRequiredSubagentIntegrationIssues } from "./integration.js";
+import { attachPreparedResourcesToNode, withGoalDagNodeLifecyclePhase } from "./lifecycle.js";
 import { parseGoalCommand, validateGoalObjective } from "./parser.js";
 import { renderBudgetLimitPrompt, renderContinuationPrompt, renderObjectiveUpdatedPrompt } from "./prompts.js";
 import { isAutoContinuableStatus, normalizeGoalStatus } from "./status.js";
@@ -203,8 +204,24 @@ export class GoalRuntime {
     }
     async startGoalSubagent(adapter, node, options) {
         const { record } = await startGoalSubagentThroughAdapter(adapter, node, options);
+        const preparedResources = {
+            ...(options.preparedResources ?? {}),
+            subagentId: record.subagentId,
+            adapterId: adapter.adapterId,
+            workspacePath: record.workspacePath ?? options.cwd ?? options.preparedResources?.workspacePath,
+            branch: record.branch ?? options.branch ?? options.preparedResources?.branch,
+            ref: record.ref ?? options.ref ?? options.preparedResources?.ref,
+            sessionId: record.sessionId ?? options.preparedResources?.sessionId,
+            sessionFile: record.sessionFile ?? options.preparedResources?.sessionFile,
+            modelArg: typeof options.metadata?.modelArg === "string" ? options.metadata.modelArg : options.preparedResources?.modelArg,
+            modelScenario: typeof options.metadata?.modelScenario === "string" ? options.metadata.modelScenario : options.preparedResources?.modelScenario,
+            thinkingLevel: options.thinkingLevel ?? options.preparedResources?.thinkingLevel,
+            updatedAt: record.updatedAt,
+            createdAt: options.preparedResources?.createdAt ?? record.createdAt,
+        };
         await this.store.saveGoalSubagent(record);
-        await this.store.saveGoalDagNode({ ...node, status: "running", updatedAt: record.updatedAt });
+        const runningNode = withGoalDagNodeLifecyclePhase(attachPreparedResourcesToNode(node, preparedResources, { phase: "runnerActive", now: record.updatedAt }), "runnerActive", { status: "running", now: record.updatedAt });
+        await this.store.saveGoalDagNode(runningNode);
         return record;
     }
     async sendGoalSubagentPrompt(adapter, subagent, prompt, options = {}) {

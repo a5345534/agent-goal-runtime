@@ -149,9 +149,10 @@ export class SQLiteGoalStore {
             .prepare(`INSERT INTO goal_dag_nodes (
           goal_id, node_id, slug, objective, scope, kind, validation_json, dependency_node_ids_json,
           expected_outputs_json, validators_json, workspace_strategy, workspace_json, risk,
-          model_scenario, model_arg, thinking_level, conflict_hints_json, completion_gates_json, status, last_validation_summary,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          model_scenario, model_arg, thinking_level, conflict_hints_json, completion_gates_json, status,
+          lifecycle_phase, prepared_resources_json, last_adapter_observation_json, last_recovery_decision_json,
+          last_validation_summary, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, node_id) DO UPDATE SET
           slug = excluded.slug,
           objective = excluded.objective,
@@ -170,9 +171,13 @@ export class SQLiteGoalStore {
           conflict_hints_json = excluded.conflict_hints_json,
           completion_gates_json = excluded.completion_gates_json,
           status = excluded.status,
+          lifecycle_phase = excluded.lifecycle_phase,
+          prepared_resources_json = excluded.prepared_resources_json,
+          last_adapter_observation_json = excluded.last_adapter_observation_json,
+          last_recovery_decision_json = excluded.last_recovery_decision_json,
           last_validation_summary = excluded.last_validation_summary,
           updated_at = excluded.updated_at`)
-            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, node.kind ?? null, node.validation === undefined ? null : JSON.stringify(node.validation), JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.workspace === undefined ? null : JSON.stringify(node.workspace), node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.thinkingLevel ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
+            .run(node.goalId, node.nodeId, node.slug, node.objective, node.scope ?? null, node.kind ?? null, node.validation === undefined ? null : JSON.stringify(node.validation), JSON.stringify(node.dependencyNodeIds), JSON.stringify(node.expectedOutputs), JSON.stringify(node.validators), node.workspaceStrategy ?? null, node.workspace === undefined ? null : JSON.stringify(node.workspace), node.risk ?? null, node.modelScenario ?? null, node.modelArg ?? null, node.thinkingLevel ?? null, node.conflictHints === undefined ? null : JSON.stringify(node.conflictHints), JSON.stringify(node.completionGates), node.status, node.lifecyclePhase ?? null, node.preparedResources === undefined ? null : JSON.stringify(node.preparedResources), node.lastAdapterObservation === undefined ? null : JSON.stringify(node.lastAdapterObservation), node.lastRecoveryDecision === undefined ? null : JSON.stringify(node.lastRecoveryDecision), node.lastValidationSummary ?? null, node.createdAt, node.updatedAt);
     }
     async getGoalDagNode(goalId, nodeId) {
         const row = this.db
@@ -194,8 +199,9 @@ export class SQLiteGoalStore {
           last_activity_at, self_reported_result, controller_validation_results_json,
           commit_sha, integration_status, integration_state, integration_source_branch,
           integration_source_ref, integration_source_head, integration_commit_sha,
-          integration_error, integration_completed_at, retry_count, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          integration_error, integration_completed_at, retry_count, last_adapter_observation_json,
+          last_recovery_decision_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(goal_id, subagent_id) DO UPDATE SET
           node_id = excluded.node_id,
           harness_adapter_id = excluded.harness_adapter_id,
@@ -219,8 +225,10 @@ export class SQLiteGoalStore {
           integration_error = excluded.integration_error,
           integration_completed_at = excluded.integration_completed_at,
           retry_count = excluded.retry_count,
+          last_adapter_observation_json = excluded.last_adapter_observation_json,
+          last_recovery_decision_json = excluded.last_recovery_decision_json,
           updated_at = excluded.updated_at`)
-            .run(subagent.goalId, subagent.nodeId, subagent.subagentId, subagent.harnessAdapterId, subagent.sessionId ?? null, subagent.sessionFile ?? null, subagent.workspacePath ?? null, subagent.branch ?? null, subagent.ref ?? null, subagent.status, JSON.stringify(subagent.prompts), subagent.lastActivityAt ?? null, subagent.selfReportedResult ?? null, subagent.controllerValidationResults === undefined ? null : JSON.stringify(subagent.controllerValidationResults), subagent.commitSha ?? null, subagent.integrationStatus ?? null, subagent.integrationState ?? null, subagent.integrationSourceBranch ?? null, subagent.integrationSourceRef ?? null, subagent.integrationSourceHead ?? null, subagent.integrationCommitSha ?? null, subagent.integrationError ?? null, subagent.integrationCompletedAt ?? null, subagent.retryCount ?? null, subagent.createdAt, subagent.updatedAt);
+            .run(subagent.goalId, subagent.nodeId, subagent.subagentId, subagent.harnessAdapterId, subagent.sessionId ?? null, subagent.sessionFile ?? null, subagent.workspacePath ?? null, subagent.branch ?? null, subagent.ref ?? null, subagent.status, JSON.stringify(subagent.prompts), subagent.lastActivityAt ?? null, subagent.selfReportedResult ?? null, subagent.controllerValidationResults === undefined ? null : JSON.stringify(subagent.controllerValidationResults), subagent.commitSha ?? null, subagent.integrationStatus ?? null, subagent.integrationState ?? null, subagent.integrationSourceBranch ?? null, subagent.integrationSourceRef ?? null, subagent.integrationSourceHead ?? null, subagent.integrationCommitSha ?? null, subagent.integrationError ?? null, subagent.integrationCompletedAt ?? null, subagent.retryCount ?? null, subagent.lastAdapterObservation === undefined ? null : JSON.stringify(subagent.lastAdapterObservation), subagent.lastRecoveryDecision === undefined ? null : JSON.stringify(subagent.lastRecoveryDecision), subagent.createdAt, subagent.updatedAt);
     }
     async getGoalSubagent(goalId, subagentId) {
         const row = this.db
@@ -361,6 +369,10 @@ export class SQLiteGoalStore {
         conflict_hints_json TEXT,
         completion_gates_json TEXT NOT NULL,
         status TEXT NOT NULL,
+        lifecycle_phase TEXT,
+        prepared_resources_json TEXT,
+        last_adapter_observation_json TEXT,
+        last_recovery_decision_json TEXT,
         last_validation_summary TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -392,6 +404,8 @@ export class SQLiteGoalStore {
         integration_error TEXT,
         integration_completed_at TEXT,
         retry_count INTEGER,
+        last_adapter_observation_json TEXT,
+        last_recovery_decision_json TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (goal_id, subagent_id)
@@ -405,6 +419,10 @@ export class SQLiteGoalStore {
         addColumnIfMissing(this.db, "goal_dag_nodes", "workspace_json", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "kind", "TEXT");
         addColumnIfMissing(this.db, "goal_dag_nodes", "validation_json", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "lifecycle_phase", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "prepared_resources_json", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "last_adapter_observation_json", "TEXT");
+        addColumnIfMissing(this.db, "goal_dag_nodes", "last_recovery_decision_json", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "promotion_target_ref", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_scenario", "TEXT");
         addColumnIfMissing(this.db, "goal_session_metadata", "controller_model_arg", "TEXT");
@@ -416,6 +434,8 @@ export class SQLiteGoalStore {
         addColumnIfMissing(this.db, "goal_subagents", "integration_commit_sha", "TEXT");
         addColumnIfMissing(this.db, "goal_subagents", "integration_error", "TEXT");
         addColumnIfMissing(this.db, "goal_subagents", "integration_completed_at", "TEXT");
+        addColumnIfMissing(this.db, "goal_subagents", "last_adapter_observation_json", "TEXT");
+        addColumnIfMissing(this.db, "goal_subagents", "last_recovery_decision_json", "TEXT");
     }
 }
 function addColumnIfMissing(db, table, column, definition) {
@@ -543,6 +563,10 @@ function rowToDagNode(row) {
         conflictHints: parseConflictHints(row.conflict_hints_json),
         completionGates: parseStringArray(row.completion_gates_json),
         status: row.status,
+        lifecyclePhase: row.lifecycle_phase ?? undefined,
+        preparedResources: parseRecord(row.prepared_resources_json),
+        lastAdapterObservation: parseRecord(row.last_adapter_observation_json),
+        lastRecoveryDecision: parseRecord(row.last_recovery_decision_json),
         lastValidationSummary: row.last_validation_summary ?? undefined,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -574,11 +598,16 @@ function rowToSubagent(row) {
         integrationError: row.integration_error ?? undefined,
         integrationCompletedAt: row.integration_completed_at ?? undefined,
         retryCount: row.retry_count ?? undefined,
+        lastAdapterObservation: parseRecord(row.last_adapter_observation_json),
+        lastRecoveryDecision: parseRecord(row.last_recovery_decision_json),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
 }
 function parseDetails(json) {
+    return parseRecord(json);
+}
+function parseRecord(json) {
     if (!json)
         return undefined;
     try {

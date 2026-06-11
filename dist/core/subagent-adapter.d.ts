@@ -1,4 +1,4 @@
-import type { GoalDagNode, GoalSubagentRecord, GoalSubagentStatus } from "./types.js";
+import type { GoalDagNode, GoalNodePreparedResources, GoalSubagentRecord, GoalSubagentStatus } from "./types.js";
 export type HarnessSubagentSessionStatus = "starting" | "running" | "idle" | "needsFollowup" | "selfReportedComplete" | "blocked" | "failed" | "stopped";
 export interface HarnessSubagentStartRequest {
     goalId: string;
@@ -9,6 +9,8 @@ export interface HarnessSubagentStartRequest {
     ref?: string;
     systemPrompt?: string;
     initialPrompt: string;
+    /** Controller-prepared resources. Legacy adapters may ignore this while honoring cwd/branch/ref/session fields. */
+    preparedResources?: GoalNodePreparedResources;
     metadata?: Record<string, unknown>;
 }
 export interface HarnessSubagentStartResult {
@@ -72,6 +74,7 @@ export interface StartGoalSubagentOptions {
     ref?: string;
     systemPrompt?: string;
     initialPrompt: string;
+    preparedResources?: GoalNodePreparedResources;
     metadata?: Record<string, unknown>;
     now?: Date | string;
     /** Pi thinking level for the subagent session (off|minimal|low|medium|high|xhigh). */

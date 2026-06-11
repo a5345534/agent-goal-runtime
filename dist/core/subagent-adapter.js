@@ -1,3 +1,4 @@
+import { adapterObservationFromHarnessState } from "./lifecycle.js";
 export async function startGoalSubagent(adapter, node, options) {
     const subagentId = options.subagentId ?? `${node.nodeId}-${randomSuffix()}`;
     const startedAt = toIso(options.now ?? new Date());
@@ -10,6 +11,7 @@ export async function startGoalSubagent(adapter, node, options) {
         ref: options.ref,
         systemPrompt: options.systemPrompt,
         initialPrompt: options.initialPrompt,
+        preparedResources: options.preparedResources,
         metadata: { ...(options.metadata ?? {}), ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}) },
     });
     const record = {
@@ -23,7 +25,7 @@ export async function startGoalSubagent(adapter, node, options) {
         branch: startResult.branch ?? options.branch,
         ref: startResult.ref ?? options.ref,
         status: mapHarnessStatusToSubagentStatus(startResult.status ?? "starting"),
-        integrationState: options.cwd || options.branch || options.ref ? "pending" : undefined,
+        integrationState: options.cwd || options.branch || options.ref || options.preparedResources ? "pending" : undefined,
         prompts: [options.initialPrompt],
         lastActivityAt: startResult.lastActivityAt ?? startedAt,
         createdAt: startedAt,
@@ -45,6 +47,7 @@ export async function sendGoalSubagentPrompt(adapter, subagent, prompt, options 
 export async function syncGoalSubagentState(adapter, subagent, options = {}) {
     const state = await adapter.getSessionState({ subagent, metadata: options.metadata });
     const now = toIso(options.now ?? new Date());
+    const observation = adapterObservationFromHarnessState(adapter.adapterId, state, { at: now });
     const controllerValidationResults = state.validationSignals?.length
         ? [...(subagent.controllerValidationResults ?? []), ...state.validationSignals]
         : subagent.controllerValidationResults;
@@ -55,6 +58,7 @@ export async function syncGoalSubagentState(adapter, subagent, options = {}) {
         selfReportedResult: state.selfReportedResult ?? subagent.selfReportedResult,
         controllerValidationResults,
         integrationStatus: state.error,
+        lastAdapterObservation: observation,
         updatedAt: now,
     };
 }

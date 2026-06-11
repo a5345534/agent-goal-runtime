@@ -54,17 +54,19 @@ The portable core exports a `HarnessSubagentAdapter` contract for agent harnesse
 such as Pi, Codex, Claude Code, OpenCode, or a shell/JSON-RPC bridge. The
 contract covers:
 
-- starting a subagent session for a DAG node,
+- starting or attaching a subagent session for a DAG node using controller-prepared resources,
 - sending follow-up prompts,
 - polling session state,
+- reporting normalized adapter observations such as `selfReportedComplete`, `selfReportedBlocked`, `protocolViolation`, `runnerError`, and `runnerLost`,
 - optionally streaming harness events,
 - aborting a session.
 
 Helpers such as `startGoalSubagent()`, `sendGoalSubagentPrompt()`, and
-`syncGoalSubagentState()` translate harness-level session handles and status into
-durable `GoalSubagentRecord` updates. `GoalRuntime` wraps these helpers so a
-controller can persist subagent starts and state syncs without depending on any
-specific harness implementation.
+`syncGoalSubagentState()` translate harness-level session handles, observations,
+and status into durable `GoalSubagentRecord` updates. `GoalRuntime` wraps these
+helpers so a controller can persist subagent starts, prepared resource bindings,
+observations, and state syncs without depending on any specific harness
+implementation.
 
 The Pi adapter exports `PiHarnessSubagentAdapter`, which launches detached Pi RPC
 sessions for DAG nodes, resumes existing session files for follow-up prompts, and
@@ -78,10 +80,12 @@ inputs only, not completion gates.
 controller runtime:
 
 - synchronize active subagents through the configured harness adapter,
+- persist detailed controller-owned lifecycle/resource/observation/recovery fields while preserving coarse node statuses for compatibility,
 - keep subagent self-reports in `controllerValidating` unless a controller
   validator approves them,
 - apply controller validation results to complete, block, or follow up a node,
 - run an optional subagent integration gate after validation and before node completion,
+- optionally route abnormal observations through a `ControllerExceptionHandler` that records durable recovery decisions,
 - compute the next ready queue and start schedulable DAG nodes,
 - accept a workspace allocator hook so native Git worktree allocation can remain
   a strategy instead of hard-coded controller behavior.
@@ -143,6 +147,9 @@ branch/worktree without coupling the scheduler to Git. The branch integrator use
 safe native-git merges, fails closed when the controller or subagent worktree has
 uncommitted changes, aborts merge conflicts, records source/integrated commit
 metadata, and returns a recovery prompt for conflict/dirty-worktree follow-up.
+Node records can retain controller-prepared resource metadata so recovery
+handlers can reuse the same worktree/branch/session context instead of creating
+uncontrolled duplicates.
 Cleanup helpers
 `cleanupTerminalSubagentWorkspaces()` and `cleanupSubagentWorkspace()` are
 explicit host-policy calls; the portable controller loop does not delete

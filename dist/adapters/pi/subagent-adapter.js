@@ -35,9 +35,9 @@ export class PiHarnessSubagentAdapter {
         return {
             sessionId: handle.sessionId,
             sessionFile: handle.sessionFile,
-            workspacePath: request.cwd,
-            branch: request.branch,
-            ref: request.ref,
+            workspacePath: request.preparedResources?.workspacePath ?? request.cwd,
+            branch: request.preparedResources?.branch ?? request.branch,
+            ref: request.preparedResources?.ref ?? request.ref,
             status: "running",
             lastActivityAt: this.now().toISOString(),
             metadata: { sessionName: launch.sessionName },
@@ -249,10 +249,11 @@ function withInspectionMetadata(state, parsed) {
 }
 function launchRequestForStart(request, modelArg) {
     return {
-        cwd: request.cwd ?? process.cwd(),
-        sessionId: piSessionId(request.subagentId),
+        cwd: request.preparedResources?.workspacePath ?? request.cwd ?? process.cwd(),
+        sessionId: request.preparedResources?.sessionId ?? (request.preparedResources?.sessionFile ? undefined : piSessionId(request.subagentId)),
+        sessionFile: request.preparedResources?.sessionFile,
         sessionName: metadataString(request.metadata, "sessionName") ?? `subagent ${request.subagentId}: ${request.node.slug}`,
-        modelArg: metadataString(request.metadata, "modelArg") ?? modelArg,
+        modelArg: request.preparedResources?.modelArg ?? metadataString(request.metadata, "modelArg") ?? modelArg,
         thinkingLevel: metadataString(request.metadata, "thinkingLevel"),
     };
 }
