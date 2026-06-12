@@ -98,6 +98,8 @@ export interface GoalControllerTickOptions {
     maxAutoRetries?: number;
     /** Non-terminal controller/node state age that triggers stale-state intervention (default 10 minutes). */
     staleStateThresholdMs?: number;
+    /** Maximum time to wait for adapter prompt dispatch before degrading to recoverable needs-followup (default 60 seconds). */
+    subagentPromptDispatchTimeoutMs?: number;
     systemPrompt?: string;
     metadata?: Record<string, unknown>;
     now?: Date | string | (() => Date | string);

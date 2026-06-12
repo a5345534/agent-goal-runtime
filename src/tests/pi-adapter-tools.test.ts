@@ -385,10 +385,10 @@ test("Pi controller poller finalizes completed subagents and removes completed w
         writeFileSync(
           sessionFile,
           [
-            JSON.stringify({ type: "session", timestamp: "2026-06-02T00:00:00.000Z", cwd: request.cwd }),
+            JSON.stringify({ type: "session", timestamp: new Date().toISOString(), cwd: request.cwd }),
             JSON.stringify({
               type: "message",
-              timestamp: "2026-06-02T00:00:01.000Z",
+              timestamp: new Date().toISOString(),
               message: {
                 role: "assistant",
                 content: [{ type: "text", text: "SUBAGENT_RESULT: completed and verified" }],
@@ -490,10 +490,10 @@ test("Pi controller poller promotes controller branch into target before complet
         writeFileSync(
           sessionFile,
           [
-            JSON.stringify({ type: "session", timestamp: "2026-06-02T00:00:00.000Z", cwd: request.cwd }),
+            JSON.stringify({ type: "session", timestamp: new Date().toISOString(), cwd: request.cwd }),
             JSON.stringify({
               type: "message",
-              timestamp: "2026-06-02T00:00:01.000Z",
+              timestamp: new Date().toISOString(),
               message: { role: "assistant", content: [{ type: "text", text: "SUBAGENT_RESULT: committed promoted.txt" }] },
             }),
           ].join("\n"),
@@ -590,10 +590,10 @@ test("Pi controller poller blocks promotion on dirty target and preserves worktr
         writeFileSync(
           sessionFile,
           [
-            JSON.stringify({ type: "session", timestamp: "2026-06-02T00:00:00.000Z", cwd: request.cwd }),
+            JSON.stringify({ type: "session", timestamp: new Date().toISOString(), cwd: request.cwd }),
             JSON.stringify({
               type: "message",
-              timestamp: "2026-06-02T00:00:01.000Z",
+              timestamp: new Date().toISOString(),
               message: { role: "assistant", content: [{ type: "text", text: "SUBAGENT_RESULT: committed blocked-promoted.txt" }] },
             }),
           ].join("\n"),
@@ -687,10 +687,10 @@ test("Pi session start recovers active goal pollers from durable state", async (
         writeFileSync(
           sessionFile,
           [
-            JSON.stringify({ type: "session", timestamp: "2026-06-02T00:00:00.000Z", cwd: request.cwd }),
+            JSON.stringify({ type: "session", timestamp: new Date().toISOString(), cwd: request.cwd }),
             JSON.stringify({
               type: "message",
-              timestamp: "2026-06-02T00:00:01.000Z",
+              timestamp: new Date().toISOString(),
               message: { role: "assistant", content: [{ type: "text", text: "SUBAGENT_RESULT: recovered closeout" }] },
             }),
           ].join("\n"),

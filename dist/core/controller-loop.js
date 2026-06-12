@@ -15,6 +15,7 @@ const NON_TERMINAL_SUBAGENT_STATUSES = new Set([
 const MAX_AUTO_RETRIES_DEFAULT = 2;
 const MAX_VALIDATION_FOLLOWUPS_FOR_SAME_FAILURE = 2;
 const DEFAULT_STALE_CONTROLLER_STATE_MS = 10 * 60_000;
+const DEFAULT_SUBAGENT_PROMPT_DISPATCH_TIMEOUT_MS = 60_000;
 const INTEGRATION_RETRY_COOLDOWN_MS = 60_000;
 const RECOVERY_BLOCKED_LEDGER_COOLDOWN_MS = 5 * 60_000;
 const recoveryBlockedLedgerCooldown = new Map();
@@ -510,10 +511,7 @@ async function tryAutoRecoverFailedNode(runtime, adapter, node, subagent, state,
     const recoveryPrompt = isTransient
         ? buildRecoveryPrompt(node, errorMessage, retryCount, maxRetries)
         : buildUnhandledScenarioRecoveryPrompt(node, errorMessage, retryCount, maxRetries);
-    const recovered = await runtime.sendGoalSubagentPrompt(adapter, subagent, recoveryPrompt, {
-        metadata: options.metadata,
-        now: tickStartedAt,
-    });
+    const recovered = await sendGoalSubagentPromptWithTimeout(runtime, options, adapter, subagent, recoveryPrompt, tickStartedAt);
     const status = isTransient
         ? `in-place recovery ${retryCount + 1}/${maxRetries}: ${errorMessage}`
         : `unhandled-scenario recovery ${retryCount + 1}/${maxRetries}: ${errorMessage}`;
@@ -730,10 +728,7 @@ async function reconcileSubagentOutcomes(runtime, goalId, options, result, tickS
             if (handled)
                 continue;
             const followupPrompt = buildSubagentFollowupPrompt(node, subagent);
-            const followed = await runtime.sendGoalSubagentPrompt(options.adapter, subagent, followupPrompt, {
-                metadata: options.metadata,
-                now: tickStartedAt,
-            });
+            const followed = await sendGoalSubagentPromptWithTimeout(runtime, options, options.adapter, subagent, followupPrompt, tickStartedAt);
             const runningSubagent = withSubagentPatch(followed, { status: "running", integrationStatus: undefined });
             const runningNode = withNodePatch(node, { status: "running", lastValidationSummary: "Requested explicit SUBAGENT_RESULT/SUBAGENT_BLOCKED marker from subagent." });
             await runtime.saveGoalSubagent(runningSubagent);
@@ -828,19 +823,20 @@ async function reconcileStaleRunnerStartingNodes(runtime, goalId, options, resul
         const runnerStarting = node.status === "running" && node.lifecyclePhase === "runnerStarting";
         const runnerPreparing = node.status === "running" && (node.lifecyclePhase === "resourcesCreating" || node.lifecyclePhase === "resourcesReady");
         const retryableBlockedRunnerStart = isRetryableStaleRunnerStartingBlock(node);
-        if (!runnerStarting && !runnerPreparing && !retryableBlockedRunnerStart)
+        const retryableInitialAllocationBlock = isRetryableInitialWorkspaceAllocationBlock(node);
+        if (!runnerStarting && !runnerPreparing && !retryableBlockedRunnerStart && !retryableInitialAllocationBlock)
             continue;
         if (state.subagents.some((subagent) => subagent.nodeId === node.nodeId))
             continue;
         const ageMs = runnerStarting ? runnerStartingStateAgeMs(node, tickStartedAt) : ageSince(node.updatedAt, tickStartedAt);
-        const requiredAgeMs = runnerStarting ? thresholdMs : INTEGRATION_RETRY_COOLDOWN_MS;
+        const requiredAgeMs = runnerStarting || retryableInitialAllocationBlock ? thresholdMs : INTEGRATION_RETRY_COOLDOWN_MS;
         if (ageMs < requiredAgeMs)
             continue;
         await recordControllerEvent(runtime, node.goalId, "staleRunnerStarting.detected", {
             nodeId: node.nodeId,
             nodeStatus: node.status,
             lifecyclePhase: node.lifecyclePhase,
-            retryingBlockedStart: retryableBlockedRunnerStart,
+            retryingBlockedStart: retryableBlockedRunnerStart || retryableInitialAllocationBlock,
             ageMs,
             thresholdMs: requiredAgeMs,
             preparedSubagentId: node.preparedResources?.subagentId,
@@ -943,6 +939,12 @@ function isRetryableStaleRunnerStartingBlock(node) {
     return node.status === "blocked" && (/stale runnerStarting restart failed: Background goal session cwd does not exist/i.test(summary) ||
         /workspace allocation failed while recovering stale (?:resourcesCreating|resourcesReady) state/i.test(summary));
 }
+function isRetryableInitialWorkspaceAllocationBlock(node) {
+    const summary = node.lastValidationSummary ?? "";
+    return node.status === "blocked" &&
+        node.lifecyclePhase === "terminal" &&
+        /^workspace allocation failed:/i.test(summary);
+}
 async function tryHandleAbnormalObservation(runtime, options, state, node, subagent, result, tickStartedAt, observation) {
     if (!options.exceptionHandler)
         return false;
@@ -977,10 +979,7 @@ async function tryHandleAbnormalObservation(runtime, options, state, node, subag
     }
     if (decision.action === "sendPromptToSameSession" || decision.action === "restartRunnerSameSession") {
         const prompt = decision.prompt ?? buildSameSessionRecoveryPrompt(node, decision);
-        const followed = await runtime.sendGoalSubagentPrompt(options.adapter, subagentWithDecision, prompt, {
-            metadata: options.metadata,
-            now: tickStartedAt,
-        });
+        const followed = await sendGoalSubagentPromptWithTimeout(runtime, options, options.adapter, subagentWithDecision, prompt, tickStartedAt);
         const runningSubagent = withSubagentPatch(followed, {
             status: "running",
             lastRecoveryDecision: decision,
@@ -1288,10 +1287,7 @@ async function tryRecoverBlockedSubagent(runtime, options, state, node, subagent
         return false;
     try {
         const prompt = buildBlockedNodeRecoveryPrompt(node, blockedReason, retryCount, maxRetries);
-        const followed = await runtime.sendGoalSubagentPrompt(options.adapter, subagent, prompt, {
-            metadata: options.metadata,
-            now: tickStartedAt,
-        });
+        const followed = await sendGoalSubagentPromptWithTimeout(runtime, options, options.adapter, subagent, prompt, tickStartedAt);
         const summary = `active-goal blocked-node recovery ${retryCount + 1}/${maxRetries}: ${blockedReason}`;
         const runningSubagent = withSubagentPatch(followed, {
             status: "running",
@@ -1489,10 +1485,7 @@ async function validateOrHold(runtime, options, state, node, subagent, result, t
         }
         let followed;
         try {
-            followed = await runtime.sendGoalSubagentPrompt(options.adapter, validationResults, validation.followupPrompt, {
-                metadata: options.metadata,
-                now: tickStartedAt,
-            });
+            followed = await sendGoalSubagentPromptWithTimeout(runtime, options, options.adapter, validationResults, validation.followupPrompt, tickStartedAt);
         }
         catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1615,10 +1608,7 @@ async function integrateOrCompleteValidatedSubagent(runtime, options, state, nod
         status: failedState,
     });
     if (integration.followupPrompt) {
-        const followed = await runtime.sendGoalSubagentPrompt(options.adapter, failedSubagent, integration.followupPrompt, {
-            metadata: options.metadata,
-            now: tickStartedAt,
-        });
+        const followed = await sendGoalSubagentPromptWithTimeout(runtime, options, options.adapter, failedSubagent, integration.followupPrompt, tickStartedAt);
         const runningSubagent = withSubagentPatch(followed, {
             status: "running",
             integrationState: "failed",
@@ -1842,6 +1832,31 @@ function resolveNow(now) {
 }
 function toIso(value) {
     return typeof value === "string" ? new Date(value).toISOString() : value.toISOString();
+}
+async function sendGoalSubagentPromptWithTimeout(runtime, options, adapter, subagent, prompt, tickStartedAt) {
+    const dispatch = runtime.sendGoalSubagentPrompt(adapter, subagent, prompt, {
+        metadata: options.metadata,
+        now: tickStartedAt,
+    });
+    const timeoutMs = options.subagentPromptDispatchTimeoutMs ?? DEFAULT_SUBAGENT_PROMPT_DISPATCH_TIMEOUT_MS;
+    if (timeoutMs <= 0)
+        return dispatch;
+    return promiseWithTimeout(dispatch, timeoutMs, `subagent prompt dispatch timed out after ${timeoutMs}ms for ${subagent.subagentId}`);
+}
+async function promiseWithTimeout(promise, timeoutMs, message) {
+    let timer;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+            }),
+        ]);
+    }
+    finally {
+        if (timer)
+            clearTimeout(timer);
+    }
 }
 async function sleep(ms, signal) {
     if (ms <= 0)

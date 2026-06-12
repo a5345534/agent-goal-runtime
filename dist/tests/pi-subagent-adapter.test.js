@@ -425,6 +425,36 @@ test("Pi subagent session inspection leaves recent assistant chatter idle but fo
     assert.match(stale.error ?? "", /unresolved assistant message/);
     assert.match(stale.error ?? "", /SUBAGENT_RESULT\/SUBAGENT_BLOCKED/);
 });
+test("Pi subagent session inspection ignores outcome markers from earlier reused-session attempts", () => {
+    const transcript = [
+        JSON.stringify({ type: "message", message: { role: "user", content: "old node" }, timestamp: "2026-06-02T00:00:00.000Z" }),
+        JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "SUBAGENT_RESULT: old node complete" }] }, timestamp: "2026-06-02T00:01:00.000Z" }),
+    ].join("\n");
+    const recentAttempt = subagent({
+        sessionFile: "/reused-session",
+        createdAt: "2026-06-02T00:20:00.000Z",
+        lastActivityAt: "2026-06-02T00:20:00.000Z",
+    });
+    const recent = readPiSubagentSessionState(recentAttempt, {
+        exists: () => true,
+        now: () => new Date("2026-06-02T00:21:00.000Z"),
+        staleAfterMs: 10 * 60_000,
+        live: true,
+        readFile: () => transcript,
+    });
+    assert.notEqual(recent.status, "selfReportedComplete");
+    assert.equal(recent.status, "idle");
+    assert.equal(recent.lastActivityAt, "2026-06-02T00:20:00.000Z");
+    const stale = readPiSubagentSessionState(recentAttempt, {
+        exists: () => true,
+        now: () => new Date("2026-06-02T00:31:00.000Z"),
+        staleAfterMs: 10 * 60_000,
+        live: true,
+        readFile: () => transcript,
+    });
+    assert.equal(stale.status, "needsFollowup");
+    assert.match(stale.error ?? "", /no current-attempt transcript activity/);
+});
 test("Pi subagent session inspection maps blocked markers and missing sessions", () => {
     const blocked = readPiSubagentSessionState(subagent({ sessionFile: "/blocked" }), {
         exists: () => true,

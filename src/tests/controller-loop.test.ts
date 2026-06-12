@@ -101,6 +101,42 @@ test("controller tick blocks ready nodes when workspace allocation fails", async
   assert.match((await runtime.getGoalDagNode("goal-1", "build"))?.lastValidationSummary ?? "", /workspace allocation failed/);
 });
 
+test("controller retries stale initial workspace allocation blockers after the stale threshold", async () => {
+  const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
+  const original = await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode;
+  await runtime.saveGoalDagNode({
+    ...original,
+    status: "blocked",
+    lifecyclePhase: "terminal",
+    lastValidationSummary: "workspace allocation failed: bound subagent worktree has uncommitted changes; cannot reuse safely:\nM module-a",
+    updatedAt: now,
+  });
+  const adapter = new FakeSubagentAdapter();
+
+  const early = await runtime.runGoalControllerTick("goal-1", {
+    adapter,
+    now: "2026-06-02T00:09:00.000Z",
+    staleStateThresholdMs: 10 * 60_000,
+    workspaceAllocator: ({ node }) => ({ subagentId: "subagent-1", cwd: `/repo/.worktrees/${node.slug}`, branch: `feat/${node.slug}` }),
+  });
+
+  assert.equal(early.started.length, 0);
+  assert.equal(adapter.starts.length, 0);
+  assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "blocked");
+
+  const retried = await runtime.runGoalControllerTick("goal-1", {
+    adapter,
+    now: "2026-06-02T00:11:00.000Z",
+    staleStateThresholdMs: 10 * 60_000,
+    workspaceAllocator: ({ node }) => ({ subagentId: "subagent-1", cwd: `/repo/.worktrees/${node.slug}`, branch: `feat/${node.slug}` }),
+  });
+
+  assert.equal(retried.started.length, 1);
+  assert.equal(adapter.starts[0]?.subagentId, "subagent-1");
+  assert.equal(adapter.starts[0]?.cwd, "/repo/.worktrees/build-feature");
+  assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "running");
+});
+
 test("controller tick durably records lifecycle phases before adapter start", async () => {
   const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature" }]);
   const adapter = new FakeSubagentAdapter();
@@ -320,6 +356,34 @@ test("validation follow-up dispatch failures degrade to needs-followup instead o
   const saved = await runtime.getGoalSubagent("goal-1", "subagent-1");
   assert.equal(saved?.status, "needsFollowup");
   assert.match(saved?.integrationStatus ?? "", /follow-up dispatch failed: RPC unavailable/);
+});
+
+test("validation follow-up dispatch timeouts degrade to needs-followup instead of hanging the poll", async () => {
+  class HangingPromptAdapter extends FakeSubagentAdapter {
+    override sendPrompt(request: HarnessSubagentPromptRequest): Promise<void> {
+      super.sendPrompt(request);
+      return new Promise(() => undefined);
+    }
+  }
+
+  const { runtime } = await runtimeWithPlan([{ nodeId: "build", objective: "Build feature", expectedOutputs: ["dist/app.js"] }]);
+  await runtime.saveGoalDagNode({ ...(await runtime.getGoalDagNode("goal-1", "build") as GoalDagNode), status: "running", updatedAt: now });
+  await runtime.saveGoalSubagent(subagent());
+  const adapter = new HangingPromptAdapter();
+  adapter.states.set("subagent-1", { status: "selfReportedComplete", selfReportedResult: "done", lastActivityAt: "2026-06-02T00:01:00.000Z" });
+
+  const tick = await runtime.runGoalControllerTick("goal-1", {
+    adapter,
+    subagentPromptDispatchTimeoutMs: 1,
+    validator: () => ({ status: "failed", summary: "missing outputs: dist/app.js", followupPrompt: "Create dist/app.js before reporting done." }),
+  });
+
+  assert.equal(tick.followups.length, 1);
+  assert.equal(adapter.prompts.length, 1);
+  assert.equal((await runtime.getGoalDagNode("goal-1", "build"))?.status, "needsFollowup");
+  const saved = await runtime.getGoalSubagent("goal-1", "subagent-1");
+  assert.equal(saved?.status, "needsFollowup");
+  assert.match(saved?.integrationStatus ?? "", /prompt dispatch timed out/);
 });
 
 test("controller validator completion unlocks dependent ready nodes in the same tick", async () => {

@@ -41,6 +41,7 @@ interface ParsedPiSessionState {
   lastActivityAt?: string;
   lastMessageRole?: string;
   lastAssistantText?: string;
+  lastAssistantAt?: string;
   lastError?: string;
 }
 
@@ -188,30 +189,33 @@ export function readPiSubagentSessionState(
   }
 
   const parsed = options.readFile ? parsePiSessionFile(options.readFile(sessionFile)) : parsePiSessionFileFromDisk(sessionFile);
-  const blocked = extractBlockedMarker(parsed.lastAssistantText);
+  const currentAttemptAt = currentAttemptCutoffAt(subagent);
+  const effectiveLastActivityAt = maxIso(parsed.lastActivityAt, currentAttemptAt);
+  const assistantIsCurrent = isAtOrAfter(parsed.lastAssistantAt, currentAttemptAt);
+  const blocked = assistantIsCurrent ? extractBlockedMarker(parsed.lastAssistantText) : undefined;
   if (blocked) {
-    return withInspectionMetadata({ status: "blocked", selfReportedResult: blocked, lastActivityAt: parsed.lastActivityAt }, parsed);
+    return withInspectionMetadata({ status: "blocked", selfReportedResult: blocked, lastActivityAt: parsed.lastAssistantAt ?? effectiveLastActivityAt }, parsed);
   }
-  const result = extractResultMarker(parsed.lastAssistantText);
+  const result = assistantIsCurrent ? extractResultMarker(parsed.lastAssistantText) : undefined;
   if (result) {
-    return withInspectionMetadata({ status: "selfReportedComplete", selfReportedResult: result, lastActivityAt: parsed.lastActivityAt }, parsed);
+    return withInspectionMetadata({ status: "selfReportedComplete", selfReportedResult: result, lastActivityAt: parsed.lastAssistantAt ?? effectiveLastActivityAt }, parsed);
   }
   if (parsed.lastError) {
-    if (isRecoverableContextOverflow(parsed, options)) {
-      return withInspectionMetadata({ status: "running", error: `Pi context overflow recovery pending: ${parsed.lastError}`, lastActivityAt: parsed.lastActivityAt }, parsed);
+    if (isRecoverableContextOverflow(parsed, options, effectiveLastActivityAt)) {
+      return withInspectionMetadata({ status: "running", error: `Pi context overflow recovery pending: ${parsed.lastError}`, lastActivityAt: effectiveLastActivityAt }, parsed);
     }
-    return withInspectionMetadata({ status: "failed", error: parsed.lastError, lastActivityAt: parsed.lastActivityAt }, parsed);
+    return withInspectionMetadata({ status: "failed", error: parsed.lastError, lastActivityAt: effectiveLastActivityAt }, parsed);
   }
-  const terminalish = parsed.lastMessageRole === "assistant" ? terminalishAssistantTextWithoutMarker(parsed.lastAssistantText) : undefined;
+  const terminalish = parsed.lastMessageRole === "assistant" && assistantIsCurrent ? terminalishAssistantTextWithoutMarker(parsed.lastAssistantText) : undefined;
   if (terminalish) {
-    return withInspectionMetadata({ status: "needsFollowup", selfReportedResult: terminalish, lastActivityAt: parsed.lastActivityAt }, parsed);
+    return withInspectionMetadata({ status: "needsFollowup", selfReportedResult: terminalish, lastActivityAt: parsed.lastAssistantAt ?? effectiveLastActivityAt }, parsed);
   }
-  const staleReason = staleUnresolvedSessionReason(parsed, options);
+  const staleReason = staleUnresolvedSessionReason(parsed, options, effectiveLastActivityAt, currentAttemptAt);
   if (staleReason) {
-    return withInspectionMetadata({ status: "needsFollowup", error: staleReason, lastActivityAt: parsed.lastActivityAt }, parsed);
+    return withInspectionMetadata({ status: "needsFollowup", error: staleReason, lastActivityAt: effectiveLastActivityAt }, parsed);
   }
   const status = parsed.lastMessageRole === "assistant" ? "idle" : options.live ? "running" : "idle";
-  return withInspectionMetadata({ status, lastActivityAt: parsed.lastActivityAt }, parsed);
+  return withInspectionMetadata({ status, lastActivityAt: effectiveLastActivityAt }, parsed);
 }
 
 function parsePiSessionFile(content: string): ParsedPiSessionState {
@@ -278,7 +282,11 @@ function parsePiSessionLine(rawLine: string, parsed: ParsedPiSessionState): void
   if (message.role === "assistant") {
     if (message.stopReason === "error" && typeof message.errorMessage === "string") parsed.lastError = message.errorMessage;
     else parsed.lastError = undefined;
-    parsed.lastAssistantText = textFromContent(message.content) || parsed.lastAssistantText;
+    const assistantText = textFromContent(message.content);
+    if (assistantText) {
+      parsed.lastAssistantText = assistantText;
+      if (typeof entry.timestamp === "string") parsed.lastAssistantAt = entry.timestamp;
+    }
   }
 }
 
@@ -362,10 +370,10 @@ function terminalishAssistantTextWithoutMarker(text: string | undefined): string
   return successLike || blockedLike ? cleaned : undefined;
 }
 
-function isRecoverableContextOverflow(parsed: ParsedPiSessionState, options: PiSubagentSessionInspectionOptions): boolean {
+function isRecoverableContextOverflow(parsed: ParsedPiSessionState, options: PiSubagentSessionInspectionOptions, effectiveLastActivityAt?: string): boolean {
   if (!parsed.lastError || !isContextOverflowError(parsed.lastError)) return false;
   if (options.live !== true) return false;
-  const lastActivity = parsed.lastActivityAt;
+  const lastActivity = effectiveLastActivityAt ?? parsed.lastActivityAt;
   if (!lastActivity) return true;
   const lastMs = Date.parse(lastActivity);
   if (!Number.isFinite(lastMs)) return true;
@@ -378,10 +386,10 @@ function isContextOverflowError(message: string): boolean {
   return CONTEXT_OVERFLOW_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
-function staleUnresolvedSessionReason(parsed: ParsedPiSessionState, options: PiSubagentSessionInspectionOptions): string | undefined {
+function staleUnresolvedSessionReason(parsed: ParsedPiSessionState, options: PiSubagentSessionInspectionOptions, effectiveLastActivityAt?: string, currentAttemptAt?: string): string | undefined {
   const role = parsed.lastMessageRole;
   if (!role) return undefined;
-  const lastActivity = parsed.lastActivityAt;
+  const lastActivity = effectiveLastActivityAt ?? parsed.lastActivityAt;
   if (options.live === false) return `stale-subagent-session: background runner is not live; last message role=${role}${lastActivity ? ` at ${lastActivity}` : ""}`;
   if (!lastActivity) return undefined;
   const lastMs = Date.parse(lastActivity);
@@ -390,10 +398,43 @@ function staleUnresolvedSessionReason(parsed: ParsedPiSessionState, options: PiS
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_SUBAGENT_SESSION_MS;
   if (nowMs - lastMs < staleAfterMs) return undefined;
   const ageSeconds = Math.max(0, Math.floor((nowMs - lastMs) / 1000));
+  if (currentAttemptAt && isBefore(parsed.lastActivityAt, currentAttemptAt)) {
+    return `stale-subagent-session: no current-attempt transcript activity for ${ageSeconds}s after prompt at ${currentAttemptAt}`;
+  }
   if (role === "assistant") {
     return `stale-subagent-session: unresolved assistant message without SUBAGENT_RESULT/SUBAGENT_BLOCKED for ${ageSeconds}s at ${lastActivity}`;
   }
   return `stale-subagent-session: no transcript activity for ${ageSeconds}s after last message role=${role} at ${lastActivity}`;
+}
+
+function currentAttemptCutoffAt(subagent: GoalSubagentRecord): string | undefined {
+  return maxIso(subagent.lastActivityAt, subagent.createdAt);
+}
+
+function maxIso(left: string | undefined, right: string | undefined): string | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (!Number.isFinite(leftMs)) return right;
+  if (!Number.isFinite(rightMs)) return left;
+  return leftMs >= rightMs ? left : right;
+}
+
+function isAtOrAfter(value: string | undefined, cutoff: string | undefined): boolean {
+  if (!cutoff) return true;
+  if (!value) return false;
+  const valueMs = Date.parse(value);
+  const cutoffMs = Date.parse(cutoff);
+  if (!Number.isFinite(valueMs) || !Number.isFinite(cutoffMs)) return true;
+  return valueMs >= cutoffMs;
+}
+
+function isBefore(value: string | undefined, cutoff: string | undefined): boolean {
+  if (!value || !cutoff) return false;
+  const valueMs = Date.parse(value);
+  const cutoffMs = Date.parse(cutoff);
+  return Number.isFinite(valueMs) && Number.isFinite(cutoffMs) && valueMs < cutoffMs;
 }
 
 function cleanupMarkerText(value: string | undefined): string | undefined {
