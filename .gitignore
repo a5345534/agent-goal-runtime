@@ -6,3 +6,6 @@ dist/
 .env.*
 !.env.example
 .agent-goal-runtime/
+.worktree/
+.worktrees/
+openspec/
