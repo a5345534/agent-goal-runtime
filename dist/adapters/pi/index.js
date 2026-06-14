@@ -101,8 +101,9 @@ export default function goalPiExtension(pi) {
         handler: async (args, ctx) => {
             lastCtx = ctx;
             try {
-                await resumePiGoalControllerPollingLoops(runtime, ctx);
-                await handlePiGoalCommand(runtime, ctx, args, backgroundGoalSessions);
+                const controllerDefaults = readPiGoalControllerDefaults(pi);
+                await resumePiGoalControllerPollingLoops(runtime, ctx, controllerDefaults);
+                await handlePiGoalCommand(runtime, ctx, args, backgroundGoalSessions, controllerDefaults);
             }
             catch (error) {
                 safeNotify(lastCtx ?? ctx, error instanceof Error ? error.message : String(error), "error");
@@ -163,7 +164,7 @@ export default function goalPiExtension(pi) {
         lastCtx = ctx;
         const sessionKey = resolveSessionKey(ctx);
         await runtime.sessionResumed(sessionKey);
-        await resumePiGoalControllerPollingLoops(runtime, ctx);
+        await resumePiGoalControllerPollingLoops(runtime, ctx, readPiGoalControllerDefaults(pi));
         const result = await runtime.getGoal(sessionKey);
         if (result.goal)
             showGoalStatus(ctx, result.goal);
@@ -261,6 +262,18 @@ export default function goalPiExtension(pi) {
 function shouldCloseStoreOnSessionShutdown(event) {
     return event?.reason === undefined || event.reason === "quit" || event.reason === "reload";
 }
+function readPiGoalControllerDefaults(pi) {
+    return { thinkingLevel: thinkingLevelFromPiApi(pi) };
+}
+function thinkingLevelFromPiApi(pi) {
+    try {
+        const level = pi.getThinkingLevel?.();
+        return typeof level === "string" && level ? level : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 function safeNotify(ctx, message, type) {
     try {
         ctx.ui?.notify?.(message, type);
@@ -271,7 +284,7 @@ function safeNotify(ctx, message, type) {
         // reporting must not turn a recoverable command failure into a process exit.
     }
 }
-async function handlePiGoalCommand(runtime, ctx, args, backgroundGoalSessions) {
+async function handlePiGoalCommand(runtime, ctx, args, backgroundGoalSessions, controllerDefaults = {}) {
     const trimmed = args.trim();
     if (!trimmed) {
         await showTargetGoalStatus(runtime, ctx);
@@ -303,7 +316,7 @@ async function handlePiGoalCommand(runtime, ctx, args, backgroundGoalSessions) {
     if (first === "pause" || first === "resume" || first === "clear") {
         ensureAtMostOneGoalRef(first, tokens.slice(1));
         const goal = await resolveGoalReferenceOrDefault(runtime, ctx, tokens[1]);
-        await runTargetGoalLifecycleCommand(runtime, ctx, first, goal.goalId);
+        await runTargetGoalLifecycleCommand(runtime, ctx, first, goal.goalId, controllerDefaults);
         return;
     }
     if (first === "edit") {
@@ -336,7 +349,7 @@ async function handlePiGoalCommand(runtime, ctx, args, backgroundGoalSessions) {
         throw new Error(validation.message ?? "execution workspace validation failed");
     if (!validation.isGit)
         throw new Error("/goal orchestration requires a git workspace");
-    await startGoalOwnedPiSession(runtime, ctx, command, binding, validation, backgroundGoalSessions, { dagDocument, dagSourceFile, modelRouting });
+    await startGoalOwnedPiSession(runtime, ctx, command, binding, validation, backgroundGoalSessions, { dagDocument, dagSourceFile, modelRouting, thinkingLevel: controllerDefaults.thinkingLevel });
 }
 function parseDagStartTokenBudget(args) {
     const tokens = tokenize(args);
@@ -365,6 +378,7 @@ async function startGoalOwnedPiSession(runtime, ctx, command, binding, validatio
         sessionId: `goal-${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         sessionName: provisionalSessionName,
         modelArg: controllerModel.model,
+        thinkingLevel: options.thinkingLevel,
     });
     try {
         const executionSessionKey = `pi:${background.sessionFile}`;
@@ -399,7 +413,7 @@ async function startGoalOwnedPiSession(runtime, ctx, command, binding, validatio
                 defaultCompletionGates: ["controller-validation"],
             });
         }
-        const orchestration = await runPiGoalControllerLoopForGoal(runtime, ctx, created.goal, binding, options.modelRouting);
+        const orchestration = await runPiGoalControllerLoopForGoal(runtime, ctx, created.goal, binding, options.modelRouting, { thinkingLevel: options.thinkingLevel });
         const dagSource = options.dagSourceFile ? ` DAG: ${shortenPath(options.dagSourceFile)}.` : "";
         ctx.ui.notify(`Goal-owned controller session started (${shortGoalId}) and planned ${orchestration.plannedNodeCount} DAG node(s); started ${orchestration.startedSubagentCount} subagent(s).${dagSource} Workspace: ${binding.workspace}${formatWorkspaceValidationSuffix(validation)}. Use /goal monitor ${shortGoalId} or /goal list to inspect it.`, "info");
     }
@@ -408,7 +422,7 @@ async function startGoalOwnedPiSession(runtime, ctx, command, binding, validatio
         throw error;
     }
 }
-async function runPiGoalControllerLoopForGoal(runtime, ctx, goal, binding, modelRouting) {
+async function runPiGoalControllerLoopForGoal(runtime, ctx, goal, binding, modelRouting, controllerDefaults = {}) {
     const existingNodes = await runtime.listGoalDagNodes(goal.goalId);
     const planned = existingNodes.length > 0
         ? { nodes: existingNodes }
@@ -416,10 +430,10 @@ async function runPiGoalControllerLoopForGoal(runtime, ctx, goal, binding, model
             defaultWorkspaceStrategy: "native-git-worktree",
             defaultCompletionGates: ["controller-validation"],
         });
-    const loopOptions = buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting);
+    const loopOptions = buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting, controllerDefaults);
     const beforeSubagentCount = (await runtime.listGoalSubagents(goal.goalId)).length;
     const loop = await runPiGoalControllerLoopWithPollLease(runtime, goal.goalId, loopOptions);
-    startPiGoalControllerPollingLoop(runtime, ctx, goal, binding);
+    startPiGoalControllerPollingLoop(runtime, ctx, goal, binding, controllerDefaults);
     const afterSubagentCount = (await runtime.listGoalSubagents(goal.goalId)).length;
     return {
         plannedNodeCount: planned.nodes.length,
@@ -454,9 +468,10 @@ function cleanupAllBackgroundGoalSessions() {
         backgroundGoalSessions.delete(goalId);
     }
 }
-function buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting = readPiGoalModelRoutingConfig()) {
+function buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting = readPiGoalModelRoutingConfig(), controllerDefaults = {}) {
     const workspaceManager = new NativeGitWorkspaceManager({ defaultBaseRef: binding.branch ?? binding.ref, fetch: false });
     const fallbackModelArg = modelArgFromContext(ctx);
+    const fallbackThinkingLevel = controllerDefaults.thinkingLevel;
     const adapter = getOrCreatePiGoalControllerAdapter(goal.goalId, fallbackModelArg);
     const allocator = createNativeGitSubagentWorkspaceAllocator(workspaceManager, {
         controllerWorkspacePath: binding.workspace,
@@ -480,6 +495,7 @@ function buildPiGoalControllerLoopOptions(ctx, goal, binding, modelRouting = rea
                     modelArg: selection.model,
                     modelScenario: selection.scenario,
                     modelScenarioReason: selection.reason,
+                    thinkingLevel: request.node.thinkingLevel ?? fallbackThinkingLevel,
                 },
             };
         },
@@ -509,12 +525,12 @@ function readPiGoalModelRoutingConfig() {
         return parseGoalModelRoutingConfigJson(json, "AGENT_GOAL_MODEL_ROUTING_JSON");
     return undefined;
 }
-function startPiGoalControllerPollingLoop(runtime, ctx, goal, binding) {
+function startPiGoalControllerPollingLoop(runtime, ctx, goal, binding, controllerDefaults = {}) {
     const pollMs = readPiGoalControllerPollMs();
     if (pollMs <= 0 || piGoalControllerPollers.has(goal.goalId))
         return;
     const timer = setInterval(() => {
-        void runPiGoalControllerPoll(runtime, ctx, goal, binding).catch((error) => {
+        void runPiGoalControllerPoll(runtime, ctx, goal, binding, controllerDefaults).catch((error) => {
             if (isTransientStoreLockError(error))
                 return;
             safeNotify(ctx, error instanceof Error ? `Goal controller poll failed: ${error.message}` : `Goal controller poll failed: ${String(error)}`, "warning");
@@ -598,7 +614,7 @@ async function runPiGoalControllerLoopWithPollLease(runtime, goalId, options) {
         releasePiGoalControllerPollLease(lease);
     }
 }
-async function runPiGoalControllerPoll(runtime, ctx, goal, binding) {
+async function runPiGoalControllerPoll(runtime, ctx, goal, binding, controllerDefaults = {}) {
     if (piGoalControllerPollsInFlight.has(goal.goalId))
         return;
     const lease = acquirePiGoalControllerPollLease(goal.goalId);
@@ -621,7 +637,7 @@ async function runPiGoalControllerPoll(runtime, ctx, goal, binding) {
             stopPiGoalControllerPollingLoop(goal.goalId);
             return;
         }
-        await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding));
+        await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding, undefined, controllerDefaults));
         if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding))
             stopPiGoalControllerPollingLoop(goal.goalId);
     }
@@ -850,7 +866,7 @@ async function recordPiControllerEvent(runtime, goalId, event, details = {}) {
         // Diagnostic only; never disrupt controller polling or closeout.
     }
 }
-async function resumePiGoalControllerPollingLoops(runtime, ctx) {
+async function resumePiGoalControllerPollingLoops(runtime, ctx, controllerDefaults = {}) {
     if (readPiGoalControllerPollMs() <= 0)
         return;
     const summaries = await runtime.listGoalSummaries();
@@ -868,8 +884,8 @@ async function resumePiGoalControllerPollingLoops(runtime, ctx) {
             ref: summary.ref,
             promotionTargetRef: summary.promotionTargetRef,
         };
-        startPiGoalControllerPollingLoop(runtime, ctx, summary, binding);
-        void runPiGoalControllerPoll(runtime, ctx, summary, binding).catch((error) => {
+        startPiGoalControllerPollingLoop(runtime, ctx, summary, binding, controllerDefaults);
+        void runPiGoalControllerPoll(runtime, ctx, summary, binding, controllerDefaults).catch((error) => {
             safeNotify(ctx, error instanceof Error ? `Goal controller recovery poll failed: ${error.message}` : `Goal controller recovery poll failed: ${String(error)}`, "warning");
         });
     }
@@ -1252,7 +1268,7 @@ async function readGoalMonitorDagSnapshot(runtime, goal) {
     const runners = readPiBackgroundRunnerInventory(goal.goalId, state.subagents);
     return { ...state, runners, ledgerEvents, refreshedAt: new Date().toISOString() };
 }
-async function runTargetGoalLifecycleCommand(runtime, ctx, action, reference) {
+async function runTargetGoalLifecycleCommand(runtime, ctx, action, reference, controllerDefaults = {}) {
     const goal = await resolveGoalReferenceOrThrow(runtime, reference);
     if (action === "clear") {
         const preview = await previewPiGoalOwnedResourceCleanup(runtime, goal);
@@ -1266,7 +1282,7 @@ async function runTargetGoalLifecycleCommand(runtime, ctx, action, reference) {
         return;
     }
     if (action === "resume") {
-        await resumeTargetGoal(runtime, ctx, goal);
+        await resumeTargetGoal(runtime, ctx, goal, controllerDefaults);
         return;
     }
     const command = parseGoalCommand(action);
@@ -1563,7 +1579,7 @@ function isPathInside(candidatePath, parentPath) {
 function isFailureMessage(message) {
     return /^failed\b/i.test(message);
 }
-async function resumeTargetGoal(runtime, ctx, goal) {
+async function resumeTargetGoal(runtime, ctx, goal, controllerDefaults = {}) {
     const dagNodes = await runtime.listGoalDagNodes(goal.goalId);
     if (goal.executionWorkspace && dagNodes.length > 0) {
         const result = await runtime.resumeGoal(goal.sessionKey, { continueIfIdle: false });
@@ -1578,8 +1594,8 @@ async function resumeTargetGoal(runtime, ctx, goal) {
             ref: goal.ref,
             promotionTargetRef: goal.promotionTargetRef,
         };
-        const loop = await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding));
-        startPiGoalControllerPollingLoop(runtime, ctx, goal, binding);
+        const loop = await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding, undefined, controllerDefaults));
+        startPiGoalControllerPollingLoop(runtime, ctx, goal, binding, controllerDefaults);
         const startedSubagentCount = loop.ticks.reduce((count, tick) => count + tick.started.length, 0);
         ctx.ui.notify(`Goal ${resumed.goalId.slice(0, 8)} resumed; controller poller recovered for ${dagNodes.length} DAG node(s), started ${startedSubagentCount} subagent(s). Use /goal monitor ${resumed.goalId.slice(0, 8)} to inspect it.`, "info");
         return;
@@ -1595,6 +1611,7 @@ async function resumeTargetGoal(runtime, ctx, goal) {
                 sessionFile: goal.sessionFile,
                 sessionName,
                 modelArg: goal.controllerModelArg ?? modelArgFromContext(ctx),
+                thinkingLevel: controllerDefaults.thinkingLevel,
             });
             backgroundGoalSessions.set(resumed.goalId, background);
             await background.sendPrompt(renderGoalResumePrompt(resumed));
@@ -1714,8 +1731,9 @@ async function formatGoalOrchestrationDetails(runtime, goalId) {
         const title = shortenMiddle(node.slug || node.nodeId, 78);
         lines.push(`  ${index + 1}. [${node.status}] ${title}`);
         lines.push(`     id: ${shortenMiddle(node.nodeId, 86)}`);
-        if (node.modelScenario || node.modelArg)
-            lines.push(`     model: ${formatGoalModel(node.modelScenario, node.modelArg, node.thinkingLevel)}`);
+        const nodeModel = formatGoalModel(node.preparedResources?.modelScenario ?? node.modelScenario, node.preparedResources?.modelArg ?? node.modelArg, node.preparedResources?.thinkingLevel ?? node.thinkingLevel);
+        if (nodeModel !== "not recorded")
+            lines.push(`     model: ${nodeModel}`);
         if (node.kind || node.validation?.profile || node.validation?.requiredEvidence?.length) {
             lines.push(`     validation contract: ${formatGoalValidationContract(node)}`);
         }

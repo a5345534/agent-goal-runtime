@@ -42,6 +42,7 @@ test("readPiBackgroundRunnerInventory maps tmp runner dirs to durable subagents"
       sessionFile: "/sessions/subagent-build-node-1.jsonl",
       sessionName: "subagent subagent-build-node-1: build-node",
       modelArg: "model/a",
+      thinkingLevel: "xhigh",
       readyPath,
       commandPath: join(runnerDir, "command.json"),
       logPath: join(runnerDir, "runner.log"),
@@ -59,6 +60,7 @@ test("readPiBackgroundRunnerInventory maps tmp runner dirs to durable subagents"
     assert.equal(records[0]?.subagentId, "subagent-build-node-1");
     assert.equal(records[0]?.nodeId, "build-node");
     assert.equal(records[0]?.goalId, "goal-abcdef12");
+    assert.equal(records[0]?.thinkingLevel, "xhigh");
     assert.equal(records[0]?.runnerAlive, false);
     assert.equal(records[0]?.childAlive, false);
     assert.equal(filterPiBackgroundRunnersForSubagent(records, "subagent-build-node-1").length, 1);

@@ -14,6 +14,7 @@ export interface PiBackgroundRunnerRecord {
   runId?: string;
   sessionName?: string;
   modelArg?: string;
+  thinkingLevel?: string;
   cwd?: string;
   sessionFile?: string;
   sessionId?: string;
@@ -43,6 +44,7 @@ interface RunnerConfigLike {
   sessionId?: string;
   sessionName?: string;
   modelArg?: string;
+  thinkingLevel?: string;
   readyPath?: string;
   commandPath?: string;
   logPath?: string;
@@ -103,6 +105,7 @@ export function readPiBackgroundRunnerInventory(
       runId: config.runId,
       sessionName: config.sessionName,
       modelArg: config.modelArg,
+      thinkingLevel: config.thinkingLevel,
       cwd: config.cwd,
       sessionFile,
       sessionId,

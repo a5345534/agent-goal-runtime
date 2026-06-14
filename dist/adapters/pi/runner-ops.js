@@ -49,6 +49,7 @@ export function readPiBackgroundRunnerInventory(goalId, subagents, options = {})
             runId: config.runId,
             sessionName: config.sessionName,
             modelArg: config.modelArg,
+            thinkingLevel: config.thinkingLevel,
             cwd: config.cwd,
             sessionFile,
             sessionId,

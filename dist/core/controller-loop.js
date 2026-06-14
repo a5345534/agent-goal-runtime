@@ -356,8 +356,9 @@ async function startReplacementSubagent(runtime, adapter, node, subagent, state,
         workspacePath: reusableResources.workspacePath ?? allocation?.cwd,
         branch: reusableResources.branch ?? allocation?.branch,
         ref: reusableResources.ref ?? allocation?.ref,
-        modelArg: typeof allocation?.metadata?.modelArg === "string" ? allocation.metadata.modelArg : reusableResources.modelArg,
-        modelScenario: typeof allocation?.metadata?.modelScenario === "string" ? allocation.metadata.modelScenario : reusableResources.modelScenario,
+        modelArg: metadataString(allocation?.metadata, "modelArg") ?? reusableResources.modelArg,
+        modelScenario: metadataString(allocation?.metadata, "modelScenario") ?? reusableResources.modelScenario,
+        thinkingLevel: metadataString(allocation?.metadata, "thinkingLevel") ?? reusableResources.thinkingLevel ?? node.thinkingLevel,
         metadata: { ...(reusableResources.metadata ?? {}), ...(allocation?.metadata ?? {}) },
         updatedAt: tickStartedAt,
     };
@@ -935,9 +936,9 @@ async function reconcileStaleRunnerStartingNodes(runtime, goalId, options, resul
             workspacePath: node.preparedResources?.workspacePath ?? allocation?.cwd,
             branch: node.preparedResources?.branch ?? allocation?.branch,
             ref: node.preparedResources?.ref ?? allocation?.ref,
-            modelArg: typeof allocation?.metadata?.modelArg === "string" ? allocation.metadata.modelArg : node.preparedResources?.modelArg ?? node.modelArg,
-            modelScenario: typeof allocation?.metadata?.modelScenario === "string" ? allocation.metadata.modelScenario : node.preparedResources?.modelScenario ?? node.modelScenario,
-            thinkingLevel: node.preparedResources?.thinkingLevel ?? node.thinkingLevel,
+            modelArg: metadataString(allocation?.metadata, "modelArg") ?? node.preparedResources?.modelArg ?? node.modelArg,
+            modelScenario: metadataString(allocation?.metadata, "modelScenario") ?? node.preparedResources?.modelScenario ?? node.modelScenario,
+            thinkingLevel: metadataString(allocation?.metadata, "thinkingLevel") ?? node.preparedResources?.thinkingLevel ?? node.thinkingLevel,
             metadata: { ...(node.preparedResources?.metadata ?? {}), ...(allocation?.metadata ?? {}) },
             createdAt: node.preparedResources?.createdAt ?? tickStartedAt,
             updatedAt: tickStartedAt,
@@ -1255,9 +1256,9 @@ async function startRecoverySubagentWithSupersededResources(runtime, options, st
         workspacePath: allocation?.cwd,
         branch: allocation?.branch,
         ref: allocation?.ref,
-        modelArg: typeof allocation?.metadata?.modelArg === "string" ? allocation.metadata.modelArg : node.preparedResources?.modelArg ?? node.modelArg,
-        modelScenario: typeof allocation?.metadata?.modelScenario === "string" ? allocation.metadata.modelScenario : node.preparedResources?.modelScenario ?? node.modelScenario,
-        thinkingLevel: node.thinkingLevel,
+        modelArg: metadataString(allocation?.metadata, "modelArg") ?? node.preparedResources?.modelArg ?? node.modelArg,
+        modelScenario: metadataString(allocation?.metadata, "modelScenario") ?? node.preparedResources?.modelScenario ?? node.modelScenario,
+        thinkingLevel: metadataString(allocation?.metadata, "thinkingLevel") ?? node.preparedResources?.thinkingLevel ?? node.thinkingLevel,
         metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}), recoveryAction: decision.action, recoveryFor: subagent.subagentId },
         createdAt: tickStartedAt,
         updatedAt: tickStartedAt,
@@ -1286,7 +1287,7 @@ async function startRecoverySubagentWithSupersededResources(runtime, options, st
         preparedResources: resources,
         metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
         now: tickStartedAt,
-        thinkingLevel: node.thinkingLevel,
+        thinkingLevel: resources.thinkingLevel ?? node.thinkingLevel,
     }, tickStartedAt);
     const replacement = withSubagentPatch(started, {
         retryCount,
@@ -1323,6 +1324,10 @@ function buildNewSessionSameWorktreePrompt(node, previous, decision, retryCount,
         `If blocked, report exactly: SUBAGENT_BLOCKED: <specific blocker and needed input/state change>`,
         `Recovery attempt ${retryCount}/${maxRetries}.`,
     ].filter((line) => Boolean(line)).join("\n");
+}
+function metadataString(metadata, key) {
+    const value = metadata?.[key];
+    return typeof value === "string" && value ? value : undefined;
 }
 function recoveryPreparedResources(node, subagent, now, options = {}) {
     const base = node.preparedResources ?? {};
@@ -1860,9 +1865,9 @@ async function startReadyNodes(runtime, goalId, options, result, tickStartedAt) 
             workspacePath: allocation?.cwd,
             branch: allocation?.branch,
             ref: allocation?.ref,
-            modelArg: typeof allocation?.metadata?.modelArg === "string" ? allocation.metadata.modelArg : typeof options.metadata?.modelArg === "string" ? options.metadata.modelArg : node.modelArg,
-            modelScenario: typeof allocation?.metadata?.modelScenario === "string" ? allocation.metadata.modelScenario : typeof options.metadata?.modelScenario === "string" ? options.metadata.modelScenario : node.modelScenario,
-            thinkingLevel: node.thinkingLevel,
+            modelArg: metadataString(allocation?.metadata, "modelArg") ?? metadataString(options.metadata, "modelArg") ?? node.modelArg,
+            modelScenario: metadataString(allocation?.metadata, "modelScenario") ?? metadataString(options.metadata, "modelScenario") ?? node.modelScenario,
+            thinkingLevel: metadataString(allocation?.metadata, "thinkingLevel") ?? metadataString(options.metadata, "thinkingLevel") ?? node.thinkingLevel,
             metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
             createdAt: tickStartedAt,
             updatedAt: tickStartedAt,
@@ -1881,7 +1886,7 @@ async function startReadyNodes(runtime, goalId, options, result, tickStartedAt) 
             preparedResources,
             metadata: { ...(options.metadata ?? {}), ...(allocation?.metadata ?? {}) },
             now: tickStartedAt,
-            thinkingLevel: node.thinkingLevel,
+            thinkingLevel: preparedResources.thinkingLevel ?? node.thinkingLevel,
         };
         let subagent;
         try {

@@ -910,6 +910,7 @@ test("Pi DAG model routing selects controller and subagent models", async () => 
         on() { },
         appendEntry() { },
         sendMessage() { },
+        getThinkingLevel: () => "xhigh",
     };
     const controllerCtx = {
         hasUI: true,
@@ -937,7 +938,9 @@ test("Pi DAG model routing selects controller and subagent models", async () => 
         await commandHandler?.("--dag models.dag.json", controllerCtx);
         assert.equal(launched.length, 2);
         assert.equal(launched[0]?.modelArg, "controller/model");
+        assert.equal(launched[0]?.thinkingLevel, "xhigh");
         assert.equal(launched[1]?.modelArg, "docs/model");
+        assert.equal(launched[1]?.thinkingLevel, "xhigh");
     }
     finally {
         setPiBackgroundGoalSessionLauncherForTests();

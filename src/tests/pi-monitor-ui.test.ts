@@ -422,6 +422,45 @@ test("goal monitor enters runner list and binds live output to selected runner",
   }
 });
 
+test("goal monitor shows runner config thinking level before transcript records it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "goal-monitor-runner-thinking-"));
+  const sessionFile = join(dir, "runner.jsonl");
+  const now = new Date("2026-05-31T00:05:00.000Z");
+  try {
+    writeFileSync(sessionFile, JSON.stringify({ type: "message", message: { role: "assistant", content: "runner transcript", usage: { totalTokens: 42 } }, timestamp: "2026-05-31T00:04:30.000Z" }));
+    const nodes = [dagNode()];
+    const subagents = [subagent({ sessionFile })];
+    const runners = [{
+      runnerDir: "/tmp/goal-runner-bg-one",
+      configPath: "/tmp/goal-runner-bg-one/config.json",
+      subagentId: "subagent-build-node-1",
+      nodeId: "build-node",
+      goalId: "abcdef123456",
+      modelArg: "openai-codex/gpt-5.5",
+      thinkingLevel: "xhigh",
+      runnerAlive: true,
+      childAlive: false,
+      sessionFile,
+    }];
+    const controller = new GoalMonitorController(
+      summary("active"),
+      () => ({ lines: ["controller-tail"], entryCount: 1, messageCount: 1 }),
+      () => ({ nodes, subagents, runners, refreshedAt: now.toISOString() }),
+      () => now,
+    );
+
+    controller.render(140, theme);
+    controller.handleInput("\r"); // nodeList
+    controller.render(140, theme);
+    controller.handleInput("\r"); // runnerList
+    const rendered = controller.render(140, theme).join("\n");
+
+    assert.match(rendered, /LIVE: Runner subagent-build-node-1 model=openai-codex\/gpt-5\.5 -> \[xhigh\] tokens=42/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("goal monitor confirms selected runner row operations", () => {
   const dir = mkdtempSync(join(tmpdir(), "goal-monitor-runner-ops-"));
   const sessionFile = join(dir, "runner.jsonl");

@@ -325,7 +325,7 @@ function launchRequestForStart(request: HarnessSubagentStartRequest, modelArg: s
     sessionFile: request.preparedResources?.sessionFile,
     sessionName: metadataString(request.metadata, "sessionName") ?? `subagent ${request.subagentId}: ${request.node.slug}`,
     modelArg: request.preparedResources?.modelArg ?? metadataString(request.metadata, "modelArg") ?? modelArg,
-    thinkingLevel: metadataString(request.metadata, "thinkingLevel"),
+    thinkingLevel: request.preparedResources?.thinkingLevel ?? metadataString(request.metadata, "thinkingLevel"),
   };
 }
 

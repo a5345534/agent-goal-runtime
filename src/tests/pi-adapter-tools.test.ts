@@ -867,7 +867,7 @@ test("Pi DAG model routing selects controller and subagent models", async () => 
   process.env.AGENT_GOAL_STATE_HOME = dir;
   process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = "0";
   let commandHandler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
-  const launched: Array<{ cwd: string; sessionId?: string; sessionFile?: string; sessionName: string; modelArg?: string }> = [];
+  const launched: Array<{ cwd: string; sessionId?: string; sessionFile?: string; sessionName: string; modelArg?: string; thinkingLevel?: string }> = [];
   const dagFile = join(workspace, "models.dag.json");
   writeFileSync(
     dagFile,
@@ -906,6 +906,7 @@ test("Pi DAG model routing selects controller and subagent models", async () => 
     on() {},
     appendEntry() {},
     sendMessage() {},
+    getThinkingLevel: () => "xhigh",
   };
   const controllerCtx = {
     hasUI: true,
@@ -935,7 +936,9 @@ test("Pi DAG model routing selects controller and subagent models", async () => 
 
     assert.equal(launched.length, 2);
     assert.equal(launched[0]?.modelArg, "controller/model");
+    assert.equal(launched[0]?.thinkingLevel, "xhigh");
     assert.equal(launched[1]?.modelArg, "docs/model");
+    assert.equal(launched[1]?.thinkingLevel, "xhigh");
   } finally {
     setPiBackgroundGoalSessionLauncherForTests();
     if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;

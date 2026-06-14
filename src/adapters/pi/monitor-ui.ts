@@ -606,8 +606,8 @@ function renderNodeListRow(node: GoalDagNode, subagents: GoalSubagentRecord[], i
     : "";
   const observation = node.lastAdapterObservation ? ` obs=${node.lastAdapterObservation.kind}` : "";
   const recovery = node.lastRecoveryDecision ? ` recovery=${node.lastRecoveryDecision.action}${node.lastRecoveryDecision.ruleId ? `:${shortenMiddle(node.lastRecoveryDecision.ruleId, 24)}` : ""}` : "";
-  const model = node.modelScenario || node.modelArg ? ` model=${formatMonitorModel(node.modelScenario, node.modelArg, node.thinkingLevel)}` : "";
-  return `${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 44)} runners=${subagents.length}${latestLabel} updated=${formatAgo(node.updatedAt, now)}${phase}${resource}${observation}${recovery}${model}`;
+  const model = formatNodeMonitorModel(node);
+  return `${index + 1}. [${node.status}] ${shortenMiddle(node.slug || node.nodeId, 44)} runners=${subagents.length}${latestLabel} updated=${formatAgo(node.updatedAt, now)}${phase}${resource}${observation}${recovery}${model ? ` model=${model}` : ""}`;
 }
 
 function renderRunnerListRow(subagent: GoalSubagentRecord, index: number, now: Date, runners: PiBackgroundRunnerRecord[] = []): string {
@@ -627,8 +627,11 @@ function formatRunnerLiveTitle(
   transcript: GoalTranscriptSnapshot,
   runners: PiBackgroundRunnerRecord[],
 ): string {
-  const runnerModel = runners.find((runner) => runner.modelArg)?.modelArg;
-  const model = formatMonitorModel(node.modelScenario, transcript.modelArg ?? runnerModel ?? node.modelArg, transcript.thinkingLevel ?? node.thinkingLevel);
+  const runnerRuntime = runners.find((runner) => runner.modelArg || runner.thinkingLevel);
+  const scenario = node.preparedResources?.modelScenario ?? node.modelScenario;
+  const modelArg = transcript.modelArg ?? runnerRuntime?.modelArg ?? node.preparedResources?.modelArg ?? node.modelArg;
+  const thinkingLevel = transcript.thinkingLevel ?? runnerRuntime?.thinkingLevel ?? node.preparedResources?.thinkingLevel ?? node.thinkingLevel;
+  const model = formatMonitorModel(scenario, modelArg, thinkingLevel);
   return `Runner ${subagent.subagentId} model=${model} tokens=${formatCompactNumber(transcript.tokenTotal ?? 0)}`;
 }
 
@@ -660,6 +663,7 @@ function formatPreparedResources(node: GoalDagNode): string {
     resources.branch ? `branch=${resources.branch}` : undefined,
     resources.sessionId ? `session=${shortenMiddle(resources.sessionId, 32)}` : undefined,
     resources.modelArg ? `model=${shortenMiddle(resources.modelArg, 48)}` : undefined,
+    resources.thinkingLevel ? `thinking=${resources.thinkingLevel}` : undefined,
   ].filter((part): part is string => Boolean(part)).join(" ") || "-";
 }
 
@@ -703,6 +707,14 @@ function formatStatusCounts(statuses: string[]): string {
 
 function formatMonitorTokens(goal: GoalSummary): string {
   return goal.tokenBudget === undefined ? formatCompactNumber(goal.tokensUsed) : `${formatCompactNumber(goal.tokensUsed)}/${formatCompactNumber(goal.tokenBudget)}`;
+}
+
+function formatNodeMonitorModel(node: GoalDagNode): string | undefined {
+  const scenario = node.preparedResources?.modelScenario ?? node.modelScenario;
+  const model = node.preparedResources?.modelArg ?? node.modelArg;
+  const thinkingLevel = node.preparedResources?.thinkingLevel ?? node.thinkingLevel;
+  const rendered = formatMonitorModel(scenario, model, thinkingLevel);
+  return rendered === "-" ? undefined : rendered;
 }
 
 function formatMonitorModel(scenario: string | undefined, model: string | undefined, thinkingLevel?: string): string {

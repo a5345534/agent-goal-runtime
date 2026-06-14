@@ -8,6 +8,7 @@ export interface PiBackgroundRunnerRecord {
     runId?: string;
     sessionName?: string;
     modelArg?: string;
+    thinkingLevel?: string;
     cwd?: string;
     sessionFile?: string;
     sessionId?: string;
