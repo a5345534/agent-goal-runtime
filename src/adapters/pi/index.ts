@@ -100,6 +100,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     (data) => pi.appendEntry(PI_GOAL_SESSION_ENTRY_TYPE, data),
   );
   let lastCtx: ExtensionContext | ExtensionCommandContext | undefined;
+  const sessionContexts = new Map<string, ExtensionContext | ExtensionCommandContext>();
   let staleContinuationAbortPending: GoalContinuationMetadata | undefined;
 
   const runtime = new GoalRuntime({
@@ -127,14 +128,21 @@ export default function goalPiExtension(pi: ExtensionAPI) {
           { deliverAs: "steer" },
         );
       },
-      notifyGoalUpdated: async (goal) => showGoalStatus(requireContext(lastCtx), goal),
-      notifyGoalCleared: async () => {
-        const ctx = requireContext(lastCtx);
+      notifyGoalUpdated: async (goal) => {
+        const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), goal.sessionKey);
+        if (ctx) showGoalStatus(ctx, goal);
+      },
+      notifyGoalCleared: async (sessionKey) => {
+        const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), sessionKey);
+        if (!ctx) return;
         ctx.ui?.setStatus?.("goal", undefined);
         ctx.ui?.setWidget?.("goal", undefined);
         ctx.ui?.notify?.("Goal cleared", "info");
       },
-      notifyGoalWarning: async (_sessionKey, message) => requireContext(lastCtx).ui?.notify?.(message, "warning"),
+      notifyGoalWarning: async (sessionKey, message) => {
+        const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), sessionKey);
+        ctx?.ui?.notify?.(message, "warning");
+      },
       collectCompletionEvidence: async (goal) => buildCompletionEvidence(requireContext(lastCtx), goal),
       getCompletionPolicyContext: async (goal) => buildCompletionPolicyContext(requireContext(lastCtx), goal),
       auditCompletion: completionAuditEnabled() ? heuristicCompletionAudit : undefined,
@@ -165,7 +173,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
       return matches.length ? matches.map((value) => ({ value, label: value })) : null;
     },
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      lastCtx = ctx;
+      lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
       try {
         const controllerDefaults = readPiGoalControllerDefaults(pi);
         await resumePiGoalControllerPollingLoops(runtime, ctx, controllerDefaults);
@@ -184,7 +192,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     promptSnippet: "get_goal returns the current /goal objective and status.",
     promptGuidelines: ["Use get_goal when you need to inspect the active /goal state before deciding whether to continue, complete, or block it."],
     async execute(_toolCallId: string, _params: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-      lastCtx = ctx;
+      lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
       const result = await runtime.toolGetGoal(resolveSessionKey(ctx));
       return { content: [{ type: "text", text: result.message }], details: result.goal ?? null };
     },
@@ -202,7 +210,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     promptSnippet: "create_goal creates a new active /goal only on explicit request and only if none exists.",
     promptGuidelines: ["Use create_goal only when the user/system/developer context explicitly asks to start a /goal; do not infer goals from ordinary tasks."],
     async execute(_toolCallId: string, params: { objective: string; token_budget?: number }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-      lastCtx = ctx;
+      lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
       const result = await runtime.toolCreateGoal(resolveSessionKey(ctx), params.objective, params.token_budget);
       return { content: [{ type: "text", text: result.message }], details: result.goal ?? null };
     },
@@ -222,7 +230,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
       "Use update_goal with status blocked only after the same blocker recurs for at least three consecutive goal turns; do not use it for ordinary difficulty or a first failure.",
     ],
     async execute(_toolCallId: string, params: { status: "complete" | "blocked" }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-      lastCtx = ctx;
+      lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
       const sessionKey = resolveSessionKey(ctx);
       const current = await runtime.getGoal(sessionKey);
       const blockedAuditEvidence =
@@ -233,7 +241,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event: unknown, ctx: ExtensionContext) => {
-    lastCtx = ctx;
+    lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
     const sessionKey = resolveSessionKey(ctx);
     await runtime.sessionResumed(sessionKey);
     await resumePiGoalControllerPollingLoops(runtime, ctx, readPiGoalControllerDefaults(pi));
@@ -242,7 +250,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event: { systemPrompt: string; prompt?: string }, ctx: ExtensionContext) => {
-    lastCtx = ctx;
+    lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
     const goal = (await runtime.getGoal(resolveSessionKey(ctx))).goal;
     const incomingContinuation = extractGoalContinuationMetadataFromText(event.prompt);
     if (incomingContinuation && !isContinuationCurrent(incomingContinuation, goal)) {
@@ -255,14 +263,14 @@ export default function goalPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("context", async (event: { messages: Array<Record<string, unknown>> }, ctx: ExtensionContext) => {
-    lastCtx = ctx;
+    lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
     const goal = (await runtime.getGoal(resolveSessionKey(ctx))).goal;
     const rewritten = rewriteQueuedGoalContinuationMessages(event.messages, goal);
     return rewritten.changed ? { messages: rewritten.messages } : undefined;
   });
 
   pi.on("turn_start", async (event: { turnIndex?: number; timestamp?: number }, ctx: ExtensionContext) => {
-    lastCtx = ctx;
+    lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
     await runtime.turnStarted({
       sessionKey: resolveSessionKey(ctx),
       turnId: event.turnIndex === undefined ? undefined : `pi-turn-${event.turnIndex}`,
@@ -272,7 +280,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event: { toolName?: string }, ctx: ExtensionContext) => {
-    lastCtx = ctx;
+    lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
     const stop = runtime.getCurrentTurnStop(resolveSessionKey(ctx));
     const toolName = event.toolName ?? "unknown";
     if (stop && !POST_STOP_ALLOWED_TOOL_SET.has(toolName)) {
@@ -285,7 +293,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("tool_execution_end", async (event: { toolName?: string; isError?: boolean }, ctx: ExtensionContext) => {
-    lastCtx = ctx;
+    lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
     const toolName = event.toolName;
     const succeeded = event.isError !== true;
     await runtime.toolCompleted({
@@ -301,7 +309,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("turn_end", async (event: { message?: Record<string, unknown> }, ctx: ExtensionContext) => {
-    lastCtx = ctx;
+    lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
     const sessionKey = resolveSessionKey(ctx);
     const tokenUsage = readTokenUsage(ctx);
 
@@ -353,6 +361,47 @@ function thinkingLevelFromPiApi(pi: ExtensionAPI): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function rememberPiGoalSessionContext<T extends ExtensionContext | ExtensionCommandContext>(
+  contexts: Map<string, ExtensionContext | ExtensionCommandContext>,
+  ctx: T,
+): T {
+  contexts.set(resolveSessionKey(ctx), ctx);
+  return ctx;
+}
+
+async function resolvePiGoalUiContext(
+  store: PiSessionGoalMirrorStore,
+  contexts: Map<string, ExtensionContext | ExtensionCommandContext>,
+  fallback: ExtensionContext | ExtensionCommandContext,
+  sessionKey: string,
+): Promise<ExtensionContext | ExtensionCommandContext | undefined> {
+  const fallbackKey = resolveSessionKey(fallback);
+  if (sessionKey === fallbackKey) return hasPiGoalUi(fallback) ? fallback : undefined;
+  try {
+    const metadata = await store.getGoalSessionMetadata(sessionKey);
+    const originSessionKey = metadata?.originSessionKey;
+    if (originSessionKey) {
+      if (originSessionKey === fallbackKey) return hasPiGoalUi(fallback) ? fallback : undefined;
+      const originCtx = contexts.get(originSessionKey);
+      if (originCtx && hasPiGoalUi(originCtx)) return originCtx;
+    }
+  } catch {
+    // Fall back to known live contexts below.
+  }
+  const sessionCtx = contexts.get(sessionKey);
+  if (sessionCtx && hasPiGoalUi(sessionCtx)) return sessionCtx;
+  return undefined;
+}
+
+function hasPiGoalUi(ctx: ExtensionContext | ExtensionCommandContext): boolean {
+  return ctx.hasUI !== false && Boolean(ctx.ui);
+}
+
+function shouldUsePiContextForGoalPoller(ctx: ExtensionContext | ExtensionCommandContext, goal: Pick<GoalSummary, "sessionKey" | "originSessionKey">): boolean {
+  const currentSessionKey = resolveSessionKey(ctx);
+  return goal.sessionKey === currentSessionKey || goal.originSessionKey === currentSessionKey;
 }
 
 function safeNotify(ctx: ExtensionContext | ExtensionCommandContext, message: string, type: "info" | "warning" | "error"): void {
@@ -510,6 +559,7 @@ async function startGoalOwnedPiSession(
       createdAt: created.goal.createdAt,
       updatedAt: new Date().toISOString(),
     });
+    showGoalStatus(ctx, created.goal);
     backgroundGoalSessions.set(created.goal.goalId, background);
     if (options.dagDocument) {
       await runtime.planGoalDagFromFileDocument(created.goal.goalId, options.dagDocument, {
@@ -770,6 +820,7 @@ async function runPiGoalControllerPoll(
   try {
     // If the goal is no longer active, stop polling and release its resources.
     const summary = (await runtime.listGoalSummaries()).find((s) => s.goalId === goal.goalId);
+    const notifyInThisContext = summary ? shouldUsePiContextForGoalPoller(ctx, summary) : false;
     if (!summary || summary.status !== "active") {
       stopPiGoalControllerPollingLoop(goal.goalId);
       cleanupPiGoalControllerAdapter(goal.goalId);
@@ -780,12 +831,12 @@ async function runPiGoalControllerPoll(
     }
 
     await reconcilePiBackgroundRunnersBeforePoll(runtime, goal.goalId);
-    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) {
+    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding, { notify: notifyInThisContext })) {
       stopPiGoalControllerPollingLoop(goal.goalId);
       return;
     }
     await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding, undefined, controllerDefaults));
-    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) stopPiGoalControllerPollingLoop(goal.goalId);
+    if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding, { notify: notifyInThisContext })) stopPiGoalControllerPollingLoop(goal.goalId);
   } finally {
     piGoalControllerPollsInFlight.delete(goal.goalId);
     releasePiGoalControllerPollLease(lease);
@@ -882,6 +933,7 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
   ctx: ExtensionContext | ExtensionCommandContext,
   goalId: string,
   binding: ResolvedWorkspaceBinding,
+  options: { notify?: boolean } = {},
 ): Promise<boolean> {
   const state = await runtime.getGoalOrchestrationState(goalId);
   const terminal = assessPiDagTerminalState(state);
@@ -911,7 +963,7 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
         targetRef: binding.promotionTargetRef,
         controllerBranch: binding.branch,
       });
-      safeNotify(ctx, `Goal ${goalId.slice(0, 8)} blocked during final promotion: ${promotion.summary}`, "warning");
+      if (options.notify !== false) safeNotify(ctx, `Goal ${goalId.slice(0, 8)} blocked during final promotion: ${promotion.summary}`, "warning");
       stopPiGoalBackgroundResources(goalId);
       return true;
     }
@@ -936,14 +988,16 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(
       const cleanup = cleanupTerminalSubagentWorkspaces(manager, state);
       const cleanupErrors = cleanup.filter((result) => result.action === "error");
       if (cleanupErrors.length > 0) {
-        safeNotify(
-          ctx,
-          `Goal ${goalId.slice(0, 8)} completed but ${cleanupErrors.length} subagent workspace cleanup(s) failed: ${cleanupErrors.map((item) => item.error ?? item.subagentId).join("; ")}`,
-          "warning",
-        );
+        if (options.notify !== false) {
+          safeNotify(
+            ctx,
+            `Goal ${goalId.slice(0, 8)} completed but ${cleanupErrors.length} subagent workspace cleanup(s) failed: ${cleanupErrors.map((item) => item.error ?? item.subagentId).join("; ")}`,
+            "warning",
+          );
+        }
       }
       const controllerCleanupError = cleanupPiControllerWorkspaceIfSafe(manager, binding);
-      if (controllerCleanupError) {
+      if (controllerCleanupError && options.notify !== false) {
         safeNotify(ctx, `Goal ${goalId.slice(0, 8)} completed but controller workspace cleanup failed: ${controllerCleanupError}`, "warning");
       }
       await recordPiControllerEvent(runtime, goalId, "cleanup.finished", {
@@ -1042,6 +1096,7 @@ async function resumePiGoalControllerPollingLoops(runtime: GoalRuntime, ctx: Ext
   const summaries = await runtime.listGoalSummaries();
   for (const summary of summaries) {
     if (summary.status !== "active") continue;
+    if (!shouldUsePiContextForGoalPoller(ctx, summary)) continue;
     if (!summary.executionWorkspace) continue;
     const state = await runtime.getGoalOrchestrationState(summary.goalId);
     if (state.nodes.length === 0) continue;

@@ -40,6 +40,7 @@ export function setPiBackgroundGoalSessionLauncherForTests(launcher) {
 export default function goalPiExtension(pi) {
     const store = new PiSessionGoalMirrorStore(new SQLiteGoalStore(), (data) => pi.appendEntry(PI_GOAL_SESSION_ENTRY_TYPE, data));
     let lastCtx;
+    const sessionContexts = new Map();
     let staleContinuationAbortPending;
     const runtime = new GoalRuntime({
         store,
@@ -63,14 +64,23 @@ export default function goalPiExtension(pi) {
                     details: { kind: request.kind, sessionKey: request.sessionKey, goalId: request.goalId },
                 }, { deliverAs: "steer" });
             },
-            notifyGoalUpdated: async (goal) => showGoalStatus(requireContext(lastCtx), goal),
-            notifyGoalCleared: async () => {
-                const ctx = requireContext(lastCtx);
+            notifyGoalUpdated: async (goal) => {
+                const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), goal.sessionKey);
+                if (ctx)
+                    showGoalStatus(ctx, goal);
+            },
+            notifyGoalCleared: async (sessionKey) => {
+                const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), sessionKey);
+                if (!ctx)
+                    return;
                 ctx.ui?.setStatus?.("goal", undefined);
                 ctx.ui?.setWidget?.("goal", undefined);
                 ctx.ui?.notify?.("Goal cleared", "info");
             },
-            notifyGoalWarning: async (_sessionKey, message) => requireContext(lastCtx).ui?.notify?.(message, "warning"),
+            notifyGoalWarning: async (sessionKey, message) => {
+                const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), sessionKey);
+                ctx?.ui?.notify?.(message, "warning");
+            },
             collectCompletionEvidence: async (goal) => buildCompletionEvidence(requireContext(lastCtx), goal),
             getCompletionPolicyContext: async (goal) => buildCompletionPolicyContext(requireContext(lastCtx), goal),
             auditCompletion: completionAuditEnabled() ? heuristicCompletionAudit : undefined,
@@ -99,7 +109,7 @@ export default function goalPiExtension(pi) {
             return matches.length ? matches.map((value) => ({ value, label: value })) : null;
         },
         handler: async (args, ctx) => {
-            lastCtx = ctx;
+            lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
             try {
                 const controllerDefaults = readPiGoalControllerDefaults(pi);
                 await resumePiGoalControllerPollingLoops(runtime, ctx, controllerDefaults);
@@ -118,7 +128,7 @@ export default function goalPiExtension(pi) {
         promptSnippet: "get_goal returns the current /goal objective and status.",
         promptGuidelines: ["Use get_goal when you need to inspect the active /goal state before deciding whether to continue, complete, or block it."],
         async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-            lastCtx = ctx;
+            lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
             const result = await runtime.toolGetGoal(resolveSessionKey(ctx));
             return { content: [{ type: "text", text: result.message }], details: result.goal ?? null };
         },
@@ -134,7 +144,7 @@ export default function goalPiExtension(pi) {
         promptSnippet: "create_goal creates a new active /goal only on explicit request and only if none exists.",
         promptGuidelines: ["Use create_goal only when the user/system/developer context explicitly asks to start a /goal; do not infer goals from ordinary tasks."],
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            lastCtx = ctx;
+            lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
             const result = await runtime.toolCreateGoal(resolveSessionKey(ctx), params.objective, params.token_budget);
             return { content: [{ type: "text", text: result.message }], details: result.goal ?? null };
         },
@@ -152,7 +162,7 @@ export default function goalPiExtension(pi) {
             "Use update_goal with status blocked only after the same blocker recurs for at least three consecutive goal turns; do not use it for ordinary difficulty or a first failure.",
         ],
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            lastCtx = ctx;
+            lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
             const sessionKey = resolveSessionKey(ctx);
             const current = await runtime.getGoal(sessionKey);
             const blockedAuditEvidence = params.status === "blocked" && current.goal ? buildBlockedAuditEvidence(ctx, current.goal, 3) : undefined;
@@ -161,7 +171,7 @@ export default function goalPiExtension(pi) {
         },
     });
     pi.on("session_start", async (_event, ctx) => {
-        lastCtx = ctx;
+        lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
         const sessionKey = resolveSessionKey(ctx);
         await runtime.sessionResumed(sessionKey);
         await resumePiGoalControllerPollingLoops(runtime, ctx, readPiGoalControllerDefaults(pi));
@@ -170,7 +180,7 @@ export default function goalPiExtension(pi) {
             showGoalStatus(ctx, result.goal);
     });
     pi.on("before_agent_start", async (event, ctx) => {
-        lastCtx = ctx;
+        lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
         const goal = (await runtime.getGoal(resolveSessionKey(ctx))).goal;
         const incomingContinuation = extractGoalContinuationMetadataFromText(event.prompt);
         if (incomingContinuation && !isContinuationCurrent(incomingContinuation, goal)) {
@@ -183,13 +193,13 @@ export default function goalPiExtension(pi) {
         return { systemPrompt: `${event.systemPrompt}\n\n${renderActiveGoalReminderPrompt(goal)}` };
     });
     pi.on("context", async (event, ctx) => {
-        lastCtx = ctx;
+        lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
         const goal = (await runtime.getGoal(resolveSessionKey(ctx))).goal;
         const rewritten = rewriteQueuedGoalContinuationMessages(event.messages, goal);
         return rewritten.changed ? { messages: rewritten.messages } : undefined;
     });
     pi.on("turn_start", async (event, ctx) => {
-        lastCtx = ctx;
+        lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
         await runtime.turnStarted({
             sessionKey: resolveSessionKey(ctx),
             turnId: event.turnIndex === undefined ? undefined : `pi-turn-${event.turnIndex}`,
@@ -198,7 +208,7 @@ export default function goalPiExtension(pi) {
         });
     });
     pi.on("tool_call", async (event, ctx) => {
-        lastCtx = ctx;
+        lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
         const stop = runtime.getCurrentTurnStop(resolveSessionKey(ctx));
         const toolName = event.toolName ?? "unknown";
         if (stop && !POST_STOP_ALLOWED_TOOL_SET.has(toolName)) {
@@ -210,7 +220,7 @@ export default function goalPiExtension(pi) {
         return;
     });
     pi.on("tool_execution_end", async (event, ctx) => {
-        lastCtx = ctx;
+        lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
         const toolName = event.toolName;
         const succeeded = event.isError !== true;
         await runtime.toolCompleted({
@@ -225,7 +235,7 @@ export default function goalPiExtension(pi) {
         }
     });
     pi.on("turn_end", async (event, ctx) => {
-        lastCtx = ctx;
+        lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
         const sessionKey = resolveSessionKey(ctx);
         const tokenUsage = readTokenUsage(ctx);
         // Prune stale continuation attempt entries that accumulate over long sessions.
@@ -273,6 +283,40 @@ function thinkingLevelFromPiApi(pi) {
     catch {
         return undefined;
     }
+}
+function rememberPiGoalSessionContext(contexts, ctx) {
+    contexts.set(resolveSessionKey(ctx), ctx);
+    return ctx;
+}
+async function resolvePiGoalUiContext(store, contexts, fallback, sessionKey) {
+    const fallbackKey = resolveSessionKey(fallback);
+    if (sessionKey === fallbackKey)
+        return hasPiGoalUi(fallback) ? fallback : undefined;
+    try {
+        const metadata = await store.getGoalSessionMetadata(sessionKey);
+        const originSessionKey = metadata?.originSessionKey;
+        if (originSessionKey) {
+            if (originSessionKey === fallbackKey)
+                return hasPiGoalUi(fallback) ? fallback : undefined;
+            const originCtx = contexts.get(originSessionKey);
+            if (originCtx && hasPiGoalUi(originCtx))
+                return originCtx;
+        }
+    }
+    catch {
+        // Fall back to known live contexts below.
+    }
+    const sessionCtx = contexts.get(sessionKey);
+    if (sessionCtx && hasPiGoalUi(sessionCtx))
+        return sessionCtx;
+    return undefined;
+}
+function hasPiGoalUi(ctx) {
+    return ctx.hasUI !== false && Boolean(ctx.ui);
+}
+function shouldUsePiContextForGoalPoller(ctx, goal) {
+    const currentSessionKey = resolveSessionKey(ctx);
+    return goal.sessionKey === currentSessionKey || goal.originSessionKey === currentSessionKey;
 }
 function safeNotify(ctx, message, type) {
     try {
@@ -406,6 +450,7 @@ async function startGoalOwnedPiSession(runtime, ctx, command, binding, validatio
             createdAt: created.goal.createdAt,
             updatedAt: new Date().toISOString(),
         });
+        showGoalStatus(ctx, created.goal);
         backgroundGoalSessions.set(created.goal.goalId, background);
         if (options.dagDocument) {
             await runtime.planGoalDagFromFileDocument(created.goal.goalId, options.dagDocument, {
@@ -624,6 +669,7 @@ async function runPiGoalControllerPoll(runtime, ctx, goal, binding, controllerDe
     try {
         // If the goal is no longer active, stop polling and release its resources.
         const summary = (await runtime.listGoalSummaries()).find((s) => s.goalId === goal.goalId);
+        const notifyInThisContext = summary ? shouldUsePiContextForGoalPoller(ctx, summary) : false;
         if (!summary || summary.status !== "active") {
             stopPiGoalControllerPollingLoop(goal.goalId);
             cleanupPiGoalControllerAdapter(goal.goalId);
@@ -633,12 +679,12 @@ async function runPiGoalControllerPoll(runtime, ctx, goal, binding, controllerDe
             return;
         }
         await reconcilePiBackgroundRunnersBeforePoll(runtime, goal.goalId);
-        if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding)) {
+        if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding, { notify: notifyInThisContext })) {
             stopPiGoalControllerPollingLoop(goal.goalId);
             return;
         }
         await runtime.runGoalControllerLoop(goal.goalId, buildPiGoalControllerLoopOptions(ctx, goal, binding, undefined, controllerDefaults));
-        if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding))
+        if (await finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goal.goalId, binding, { notify: notifyInThisContext }))
             stopPiGoalControllerPollingLoop(goal.goalId);
     }
     finally {
@@ -728,7 +774,7 @@ function runnerDirMtimeMs(runnerDir) {
         return 0;
     }
 }
-async function finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goalId, binding) {
+async function finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goalId, binding, options = {}) {
     const state = await runtime.getGoalOrchestrationState(goalId);
     const terminal = assessPiDagTerminalState(state);
     if (!terminal.terminal)
@@ -757,7 +803,8 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goalId, bindi
                 targetRef: binding.promotionTargetRef,
                 controllerBranch: binding.branch,
             });
-            safeNotify(ctx, `Goal ${goalId.slice(0, 8)} blocked during final promotion: ${promotion.summary}`, "warning");
+            if (options.notify !== false)
+                safeNotify(ctx, `Goal ${goalId.slice(0, 8)} blocked during final promotion: ${promotion.summary}`, "warning");
             stopPiGoalBackgroundResources(goalId);
             return true;
         }
@@ -781,10 +828,12 @@ async function finalizeAndCleanupPiGoalIfDagTerminal(runtime, ctx, goalId, bindi
             const cleanup = cleanupTerminalSubagentWorkspaces(manager, state);
             const cleanupErrors = cleanup.filter((result) => result.action === "error");
             if (cleanupErrors.length > 0) {
-                safeNotify(ctx, `Goal ${goalId.slice(0, 8)} completed but ${cleanupErrors.length} subagent workspace cleanup(s) failed: ${cleanupErrors.map((item) => item.error ?? item.subagentId).join("; ")}`, "warning");
+                if (options.notify !== false) {
+                    safeNotify(ctx, `Goal ${goalId.slice(0, 8)} completed but ${cleanupErrors.length} subagent workspace cleanup(s) failed: ${cleanupErrors.map((item) => item.error ?? item.subagentId).join("; ")}`, "warning");
+                }
             }
             const controllerCleanupError = cleanupPiControllerWorkspaceIfSafe(manager, binding);
-            if (controllerCleanupError) {
+            if (controllerCleanupError && options.notify !== false) {
                 safeNotify(ctx, `Goal ${goalId.slice(0, 8)} completed but controller workspace cleanup failed: ${controllerCleanupError}`, "warning");
             }
             await recordPiControllerEvent(runtime, goalId, "cleanup.finished", {
@@ -872,6 +921,8 @@ async function resumePiGoalControllerPollingLoops(runtime, ctx, controllerDefaul
     const summaries = await runtime.listGoalSummaries();
     for (const summary of summaries) {
         if (summary.status !== "active")
+            continue;
+        if (!shouldUsePiContextForGoalPoller(ctx, summary))
             continue;
         if (!summary.executionWorkspace)
             continue;

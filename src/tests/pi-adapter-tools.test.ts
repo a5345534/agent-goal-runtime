@@ -714,6 +714,7 @@ test("Pi session start recovers active goal pollers from durable state", async (
     sendMessage() {},
   };
   const statuses: string[] = [];
+  const otherStatuses: string[] = [];
   const controllerCtx = {
     hasUI: true,
     cwd: workspace,
@@ -747,6 +748,24 @@ test("Pi session start recovers active goal pollers from durable state", async (
     assert.equal(existsSync(launched[0]?.cwd ?? ""), true);
 
     process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = "10";
+    const otherCtx = {
+      ...controllerCtx,
+      sessionManager: {
+        getSessionFile: () => "/other/session.jsonl",
+        getSessionName: () => "other",
+      },
+      ui: {
+        ...controllerCtx.ui,
+        setStatus(_name: string, value?: string) {
+          if (value) otherStatuses.push(value);
+        },
+      },
+    };
+    for (const handler of handlers.get("session_start") ?? []) await handler({}, otherCtx as never);
+    await delay(30);
+    assert.deepEqual(otherStatuses, []);
+    assert.notEqual(statuses.at(-1), "🎯 complete");
+
     for (const handler of handlers.get("session_start") ?? []) await handler({}, controllerCtx as never);
 
     await waitForAssertion(() => assert.equal(statuses.at(-1), "🎯 complete"));
