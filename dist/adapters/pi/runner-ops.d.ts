@@ -28,6 +28,8 @@ export interface PiBackgroundRunnerOperationResult {
     archiveDir?: string;
     messages: string[];
 }
+export declare const PI_BACKGROUND_RUNNER_DIR_PREFIX = "goal-runner-bg-";
+export declare const PI_LEGACY_BACKGROUND_RUNNER_DIR_PREFIX = "agent-goal-runtime-bg-";
 export declare function readPiBackgroundRunnerInventory(goalId: string, subagents: GoalSubagentRecord[], options?: {
     tmpRoot?: string;
 }): PiBackgroundRunnerRecord[];

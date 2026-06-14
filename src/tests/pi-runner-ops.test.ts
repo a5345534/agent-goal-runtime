@@ -33,7 +33,7 @@ function subagent(overrides: Partial<GoalSubagentRecord> = {}): GoalSubagentReco
 test("readPiBackgroundRunnerInventory maps tmp runner dirs to durable subagents", () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-runner-inventory-"));
   try {
-    const runnerDir = join(dir, "agent-goal-runtime-bg-one");
+    const runnerDir = join(dir, "goal-runner-bg-one");
     mkdirSync(runnerDir);
     const readyPath = join(runnerDir, "ready.json");
     writeFileSync(join(runnerDir, "config.json"), JSON.stringify({
@@ -67,14 +67,34 @@ test("readPiBackgroundRunnerInventory maps tmp runner dirs to durable subagents"
   }
 });
 
+test("readPiBackgroundRunnerInventory recognizes legacy tmp runner dirs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-runner-legacy-inventory-"));
+  try {
+    const runnerDir = join(dir, "agent-goal-runtime-bg-one");
+    mkdirSync(runnerDir);
+    writeFileSync(join(runnerDir, "config.json"), JSON.stringify({
+      cwd: "/repo/.worktrees/build-node",
+      sessionFile: "/sessions/subagent-build-node-1.jsonl",
+      sessionName: "subagent subagent-build-node-1: build-node",
+    }));
+
+    const records = readPiBackgroundRunnerInventory("goal-abcdef12", [subagent()], { tmpRoot: dir });
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.subagentId, "subagent-build-node-1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("archivePiBackgroundRunnerDirs moves only stopped runner temp dirs", () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-runner-archive-"));
   const archiveRoot = join(dir, "archive");
   try {
-    const stoppedDir = join(dir, "agent-goal-runtime-bg-stopped");
+    const stoppedDir = join(dir, "goal-runner-bg-stopped");
     mkdirSync(stoppedDir);
     writeFileSync(join(stoppedDir, "config.json"), "{}");
-    const liveDir = join(dir, "agent-goal-runtime-bg-live");
+    const liveDir = join(dir, "goal-runner-bg-live");
     mkdirSync(liveDir);
     writeFileSync(join(liveDir, "config.json"), "{}");
     const records: PiBackgroundRunnerRecord[] = [
@@ -103,7 +123,7 @@ test("archivePiBackgroundRunnerDirs falls back for cross-device archive roots", 
       t.skip("source and archive roots are on the same device");
       return;
     }
-    const stoppedDir = join(sourceRoot, "agent-goal-runtime-bg-stopped");
+    const stoppedDir = join(sourceRoot, "goal-runner-bg-stopped");
     mkdirSync(stoppedDir);
     writeFileSync(join(stoppedDir, "config.json"), "{}");
     writeFileSync(join(stoppedDir, "runner.log"), "runner output\n");
@@ -115,7 +135,7 @@ test("archivePiBackgroundRunnerDirs falls back for cross-device archive roots", 
 
     assert.equal(result.archived, 1);
     assert.equal(existsSync(stoppedDir), false);
-    assert.ok(result.archiveDir && existsSync(join(result.archiveDir, "agent-goal-runtime-bg-stopped", "runner.log")));
+    assert.ok(result.archiveDir && existsSync(join(result.archiveDir, "goal-runner-bg-stopped", "runner.log")));
   } finally {
     rmSync(sourceRoot, { recursive: true, force: true });
     rmSync(archiveRoot, { recursive: true, force: true });

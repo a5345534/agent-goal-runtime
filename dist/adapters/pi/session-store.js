@@ -1,5 +1,10 @@
-export const PI_GOAL_SESSION_ENTRY_TYPE = "agent-goal-runtime-state";
+export const PI_GOAL_SESSION_ENTRY_TYPE = "goal-runner-state";
+export const PI_LEGACY_GOAL_SESSION_ENTRY_TYPE = "agent-goal-runtime-state";
+export const PI_GOAL_SESSION_ENTRY_TYPES = new Set([PI_GOAL_SESSION_ENTRY_TYPE, PI_LEGACY_GOAL_SESSION_ENTRY_TYPE]);
 export const PI_GOAL_SESSION_ENTRY_VERSION = 1;
+export function isPiGoalSessionEntryType(value) {
+    return typeof value === "string" && PI_GOAL_SESSION_ENTRY_TYPES.has(value);
+}
 /**
  * Mirrors portable GoalStore writes into Pi custom session entries.
  *
@@ -145,7 +150,7 @@ export class PiSessionGoalMirrorStore {
 export function readPiGoalSessionMirrorEntries(entries) {
     const mirrored = [];
     for (const entry of entries) {
-        if (entry.type !== "custom" || entry.customType !== PI_GOAL_SESSION_ENTRY_TYPE)
+        if (entry.type !== "custom" || !isPiGoalSessionEntryType(entry.customType))
             continue;
         const data = entry.data;
         if (isPiGoalSessionEntryData(data))

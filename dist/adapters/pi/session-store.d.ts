@@ -1,6 +1,9 @@
 import type { ContinuationReservation, GoalDagNode, GoalLedgerEvent, GoalRecord, GoalSessionMetadata, GoalStore, GoalSubagentRecord, GoalSummary, WorkspaceProfile } from "../../core/index.js";
-export declare const PI_GOAL_SESSION_ENTRY_TYPE = "agent-goal-runtime-state";
+export declare const PI_GOAL_SESSION_ENTRY_TYPE = "goal-runner-state";
+export declare const PI_LEGACY_GOAL_SESSION_ENTRY_TYPE = "agent-goal-runtime-state";
+export declare const PI_GOAL_SESSION_ENTRY_TYPES: Set<string>;
 export declare const PI_GOAL_SESSION_ENTRY_VERSION = 1;
+export declare function isPiGoalSessionEntryType(value: unknown): value is string;
 export type PiGoalSessionEntryData = {
     version: 1;
     kind: "goal_snapshot";

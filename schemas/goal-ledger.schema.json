@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/agent-goal-runtime/goal-ledger.schema.json",
+  "$id": "https://example.invalid/goal-runner/goal-ledger.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["sessionKey", "type", "at"],

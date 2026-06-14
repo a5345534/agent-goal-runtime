@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { MemoryGoalStore } from "../core/index.js";
-import { PI_GOAL_SESSION_ENTRY_TYPE, PiSessionGoalMirrorStore, readPiGoalSessionMirrorEntries, } from "../adapters/pi/session-store.js";
+import { PI_GOAL_SESSION_ENTRY_TYPE, PI_LEGACY_GOAL_SESSION_ENTRY_TYPE, PiSessionGoalMirrorStore, readPiGoalSessionMirrorEntries, } from "../adapters/pi/session-store.js";
 const fixedNow = new Date("2026-05-31T00:00:00.000Z");
 function makeStore(entries = []) {
     return new PiSessionGoalMirrorStore(new MemoryGoalStore(), (data) => entries.push(data), { now: () => fixedNow });
@@ -48,11 +48,13 @@ test("reads valid Pi custom mirror entries from session entries", () => {
             customType: PI_GOAL_SESSION_ENTRY_TYPE,
             data: { version: 1, kind: "goal_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() },
         },
+        { type: "custom", customType: PI_LEGACY_GOAL_SESSION_ENTRY_TYPE, data: { version: 1, kind: "reservation_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() } },
         { type: "custom", customType: "other", data: { version: 1, kind: "goal_cleared" } },
         { type: "custom", customType: PI_GOAL_SESSION_ENTRY_TYPE, data: { version: 99, kind: "goal_cleared" } },
     ]);
     assert.deepEqual(mirrored, [
         { version: 1, kind: "goal_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() },
+        { version: 1, kind: "reservation_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() },
     ]);
 });
 test("mirror append failures do not fail canonical store writes", async () => {

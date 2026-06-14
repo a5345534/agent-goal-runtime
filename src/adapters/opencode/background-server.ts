@@ -272,7 +272,7 @@ export function readOpencodeBackgroundReadyFile(path: string): Record<string, un
 }
 
 export function opencodeBackgroundRunDir(tmpRoot?: string): string {
-  return join(tmpRoot ?? "/tmp", `agent-goal-runtime-oc-bg-${randomUUID().slice(0, 8)}`);
+  return join(tmpRoot ?? "/tmp", `goal-runner-oc-bg-${randomUUID().slice(0, 8)}`);
 }
 
 export function opencodeBackgroundCommandPath(runDir: string): string {

@@ -3,6 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolveDefaultStateRoot } from "../../core/index.js";
+export const PI_BACKGROUND_RUNNER_DIR_PREFIX = "goal-runner-bg-";
+export const PI_LEGACY_BACKGROUND_RUNNER_DIR_PREFIX = "agent-goal-runtime-bg-";
+function isPiBackgroundRunnerDirName(entry) {
+    return entry.startsWith(PI_BACKGROUND_RUNNER_DIR_PREFIX) || entry.startsWith(PI_LEGACY_BACKGROUND_RUNNER_DIR_PREFIX);
+}
 export function readPiBackgroundRunnerInventory(goalId, subagents, options = {}) {
     const tmpRoot = options.tmpRoot ?? os.tmpdir();
     let entries;
@@ -14,7 +19,7 @@ export function readPiBackgroundRunnerInventory(goalId, subagents, options = {})
     }
     const records = [];
     for (const entry of entries) {
-        if (!entry.startsWith("agent-goal-runtime-bg-"))
+        if (!isPiBackgroundRunnerDirName(entry))
             continue;
         const runnerDir = path.join(tmpRoot, entry);
         const configPath = path.join(runnerDir, "config.json");
@@ -83,7 +88,7 @@ export function signalPiBackgroundRunners(records, operation) {
 export function archivePiBackgroundRunnerDirs(records, options = {}) {
     const archiveRoot = options.archiveRoot ?? path.join(resolveDefaultStateRoot(), "runner-archives");
     const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, "").replace(/Z$/, "Z");
-    const archiveDir = path.join(archiveRoot, `agent-goal-runtime-bg-${stamp}-${randomUUID().slice(0, 8)}`);
+    const archiveDir = path.join(archiveRoot, `${PI_BACKGROUND_RUNNER_DIR_PREFIX}${stamp}-${randomUUID().slice(0, 8)}`);
     const messages = [];
     let archived = 0;
     let skippedLive = 0;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { MemoryGoalStore, type GoalLedgerEvent, type GoalRecord, type GoalSessionMetadata, type WorkspaceProfile } from "../core/index.js";
 import {
   PI_GOAL_SESSION_ENTRY_TYPE,
+  PI_LEGACY_GOAL_SESSION_ENTRY_TYPE,
   PiSessionGoalMirrorStore,
   readPiGoalSessionMirrorEntries,
   type PiGoalSessionEntryData,
@@ -62,12 +63,14 @@ test("reads valid Pi custom mirror entries from session entries", () => {
       customType: PI_GOAL_SESSION_ENTRY_TYPE,
       data: { version: 1, kind: "goal_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() },
     },
+    { type: "custom", customType: PI_LEGACY_GOAL_SESSION_ENTRY_TYPE, data: { version: 1, kind: "reservation_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() } },
     { type: "custom", customType: "other", data: { version: 1, kind: "goal_cleared" } },
     { type: "custom", customType: PI_GOAL_SESSION_ENTRY_TYPE, data: { version: 99, kind: "goal_cleared" } },
   ]);
 
   assert.deepEqual(mirrored, [
     { version: 1, kind: "goal_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() },
+    { version: 1, kind: "reservation_cleared", sessionKey: "pi:s1", at: fixedNow.toISOString() },
   ]);
 });
 

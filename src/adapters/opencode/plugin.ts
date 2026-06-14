@@ -75,10 +75,12 @@ import { finalizeOpencodeGoalFromDagTerminalState, formatOpencodeCloseoutDiagnos
 
 const MEANINGFUL_PROGRESS_TOOL_SET = new Set(["write", "edit", "bash", "read", "grep", "find", "ls"]);
 const POST_STOP_ALLOWED_TOOL_SET = new Set(["get_goal", "read", "grep", "find", "ls"]);
+const OPENCODE_STATE_DIR_NAME = ".goal-runner";
+const LEGACY_OPENCODE_STATE_DIR_NAME = ".agent-goal-runtime";
 
 export interface OpencodeGoalPluginOptions {
 
-  /** Override the SQLite state root. Defaults to `AGENT_GOAL_STATE_HOME` or `<cwd>/.agent-goal-runtime`. */
+  /** Override the SQLite state root. Defaults to `AGENT_GOAL_STATE_HOME` or `<cwd>/.goal-runner`, falling back to an existing `<cwd>/.agent-goal-runtime`. */
   stateRoot?: string;
   /** Optional pre-built runtime (used by tests). */
   runtime?: GoalRuntime;
@@ -104,8 +106,16 @@ export interface OpencodeGoalPluginContext {
   backgroundSessions: Map<string, { stop: () => void }>;
 }
 
+function resolveDefaultOpencodeStateRoot(): string {
+  if (process.env.AGENT_GOAL_STATE_HOME) return process.env.AGENT_GOAL_STATE_HOME;
+  const nextRoot = join(process.cwd(), OPENCODE_STATE_DIR_NAME);
+  const legacyRoot = join(process.cwd(), LEGACY_OPENCODE_STATE_DIR_NAME);
+  if (!fs.existsSync(nextRoot) && fs.existsSync(legacyRoot)) return legacyRoot;
+  return nextRoot;
+}
+
 export function createOpencodeGoalPluginContext(options: OpencodeGoalPluginOptions = {}): OpencodeGoalPluginContext {
-  const stateRoot = options.stateRoot ?? process.env.AGENT_GOAL_STATE_HOME ?? join(process.cwd(), ".agent-goal-runtime");
+  const stateRoot = options.stateRoot ?? resolveDefaultOpencodeStateRoot();
   const store = new SQLiteGoalStore({ stateRoot });
   const registry = new OpencodeHiddenContinuationRegistry();
   const subagentAdapter = options.subagentAdapter ?? createOpencodeHarnessSubagentAdapter();

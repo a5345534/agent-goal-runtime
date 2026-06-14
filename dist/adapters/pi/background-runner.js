@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import { isPiGoalSessionEntryType } from "./session-store.js";
 const TERMINAL_GOAL_STATUSES = new Set(["complete", "blocked", "paused", "budgetLimited", "usageLimited"]);
 const configPath = process.argv[2];
 if (!configPath) {
@@ -113,7 +114,7 @@ class RpcClient {
     }
 }
 function isTerminalGoalStateEvent(event) {
-    if (event.type !== "custom" || event.customType !== "agent-goal-runtime-state")
+    if (event.type !== "custom" || !isPiGoalSessionEntryType(event.customType))
         return false;
     const data = event.data;
     if (!data || typeof data !== "object")

@@ -102,7 +102,7 @@ Pi goal-owned sessions require explicit workspace binding unless the user opts i
 
 ## OpenCode adapter
 
-The `agent-goal-runtime/opencode` export is an `@opencode-ai/plugin`
+The `goal-runner/opencode` export is an `@opencode-ai/plugin`
 `Plugin` that reuses the portable core. It maps:
 
 - slash commands through a `goal_command` tool that takes the full
@@ -181,7 +181,7 @@ The included Pi adapter maps:
 - ordinary-turn active goal reminders through `before_agent_start`
 - goal registry/list commands, read-only live transcript monitor, targeted status/monitor/pause/resume/clear/edit/budget commands, and named workspace profile commands
 - explicit workspace/branch/ref binding validation without filesystem mutation, branch creation, or branch switching
-- Pi custom session-entry mirroring through append-only `agent-goal-runtime-state` entries while the portable store remains canonical
+- Pi custom session-entry mirroring through append-only `goal-runner-state` entries while the portable store remains canonical
 - hidden continuation through `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })` in the materialized goal session`
 - stale hidden continuation rewriting through the Pi `context` hook, including non-runnable stale bookkeeping and superseding older duplicate active-goal continuations
 - stale hidden continuation abort suppression in `before_agent_start` / `turn_end` so cancelled old-goal continuations do not pause the current goal

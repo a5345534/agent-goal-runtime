@@ -78,6 +78,6 @@ export {
 export { renderOpencodeMonitorLines, readOpencodeGoalMonitorSnapshot, type OpencodeMonitorSnapshot, type OpencodeMonitorRendererOptions } from "./monitor-ui.js";
 export { finalizeOpencodeGoalFromDagTerminalState, formatOpencodeCloseoutDiagnostics, type OpencodeGoalCloseoutOptions, type OpencodeGoalCloseoutResult } from "./closeout.js";
 
-// Default export for `import agentGoalOpencode from 'agent-goal-runtime/opencode'`.
+// Default export for `import agentGoalOpencode from 'goal-runner/opencode'`.
 import { opencodeGoalPlugin } from "./plugin.js";
 export default opencodeGoalPlugin;

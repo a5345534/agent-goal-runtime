@@ -18,6 +18,7 @@ import {
   type BackgroundGoalSessionLaunchRequest,
 } from "./background-session.js";
 import { readPiBackgroundRunnerInventory } from "./runner-ops.js";
+import { isPiGoalSessionEntryType } from "./session-store.js";
 
 export interface PiHarnessSubagentAdapterOptions {
   launcher?: BackgroundGoalSessionLauncher;
@@ -302,11 +303,11 @@ function parsePiSessionLine(rawLine: string, parsed: ParsedPiSessionState): void
 }
 
 function looksLikeRuntimeStateMirrorLine(rawLine: string): boolean {
-  return rawLine.includes('"agent-goal-runtime-state"') && rawLine.includes('"custom"');
+  return rawLine.includes('"custom"') && (rawLine.includes('"goal-runner-state"') || rawLine.includes('"agent-goal-runtime-state"'));
 }
 
 function isRuntimeStateMirrorEntry(entry: Record<string, unknown>): boolean {
-  return (entry.type === "custom" || entry.type === "custom_message") && entry.customType === "agent-goal-runtime-state";
+  return (entry.type === "custom" || entry.type === "custom_message") && isPiGoalSessionEntryType(entry.customType);
 }
 
 function withInspectionMetadata(state: HarnessSubagentSessionState, parsed: ParsedPiSessionState, extra: Record<string, unknown> = {}): HarnessSubagentSessionState {

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as fs from "node:fs";
+import { isPiGoalSessionEntryType } from "./session-store.js";
 
 interface RunnerConfig {
   runId: string;
@@ -139,7 +140,7 @@ class RpcClient {
 }
 
 function isTerminalGoalStateEvent(event: Record<string, unknown>): boolean {
-  if (event.type !== "custom" || event.customType !== "agent-goal-runtime-state") return false;
+  if (event.type !== "custom" || !isPiGoalSessionEntryType(event.customType)) return false;
   const data = event.data as Record<string, unknown> | undefined;
   if (!data || typeof data !== "object") return false;
   if (data.kind === "goal_cleared") return true;

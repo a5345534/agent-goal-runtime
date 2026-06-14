@@ -148,7 +148,7 @@ test("goal monitor transcript includes custom messages, tool calls, and session 
     try {
         writeFileSync(sessionFile, [
             JSON.stringify({ type: "session_info", name: "goal abcdef12", timestamp: "2026-05-31T00:00:01.000Z" }),
-            JSON.stringify({ type: "custom_message", customType: "agent-goal-runtime", content: "hidden steering", timestamp: "2026-05-31T00:00:02.000Z" }),
+            JSON.stringify({ type: "custom_message", customType: "goal-runner", content: "hidden steering", timestamp: "2026-05-31T00:00:02.000Z" }),
             JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: { path: "README.md" } }] }, timestamp: "2026-05-31T00:00:03.000Z" }),
             JSON.stringify({ type: "compaction", summary: "compacted", timestamp: "2026-05-31T00:00:04.000Z" }),
         ].join("\n"));
@@ -157,7 +157,7 @@ test("goal monitor transcript includes custom messages, tool calls, and session 
         assert.equal(snapshot.messageCount, 2);
         assert.deepEqual(snapshot.lines, [
             "[05-31T00:00:01Z] session name: goal abcdef12",
-            "[05-31T00:00:02Z] custom:agent-goal-runtime: hidden steering",
+            "[05-31T00:00:02Z] custom:goal-runner: hidden steering",
             '[05-31T00:00:03Z] assistant: [tool call] read {"path":"README.md"}',
             "[05-31T00:00:04Z] compaction: compacted",
         ]);
@@ -296,8 +296,8 @@ test("goal monitor enters runner list and binds live output to selected runner",
         ];
         const runners = [
             {
-                runnerDir: "/tmp/agent-goal-runtime-bg-one",
-                configPath: "/tmp/agent-goal-runtime-bg-one/config.json",
+                runnerDir: "/tmp/goal-runner-bg-one",
+                configPath: "/tmp/goal-runner-bg-one/config.json",
                 subagentId: "subagent-build-node-1",
                 nodeId: "build-node",
                 goalId: "abcdef123456",
@@ -340,8 +340,8 @@ test("goal monitor confirms selected runner row operations", () => {
         const nodes = [dagNode()];
         const subagents = [subagent({ sessionFile })];
         const runners = [{
-                runnerDir: "/tmp/agent-goal-runtime-bg-one",
-                configPath: "/tmp/agent-goal-runtime-bg-one/config.json",
+                runnerDir: "/tmp/goal-runner-bg-one",
+                configPath: "/tmp/goal-runner-bg-one/config.json",
                 subagentId: "subagent-build-node-1",
                 nodeId: "build-node",
                 goalId: "abcdef123456",

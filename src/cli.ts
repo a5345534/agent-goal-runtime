@@ -33,7 +33,7 @@ try {
   const commandLine = args.join(" ");
   const parsed = parseGoalCommand(commandLine);
   if (parsed.kind === "edit") {
-    throw new Error("CLI edit requires passing the replacement objective directly, e.g. agent-goal \"new objective\"");
+    throw new Error("CLI edit requires passing the replacement objective directly, e.g. goal-runner \"new objective\" (agent-goal remains a legacy alias)");
   }
   const result = await runtime.executeParsedCommand(sessionKey, parsed);
   console.log(result.message);
@@ -42,14 +42,16 @@ try {
 }
 
 function printHelp(): void {
-  console.log(`agent-goal — portable /goal runtime smoke CLI
+  console.log(`goal-runner — portable /goal runtime smoke CLI
 
 Usage:
-  agent-goal [--session KEY] [--state-root DIR]                  Show current goal
-  agent-goal [--session KEY] [--state-root DIR] <objective>      Start/update goal
-  agent-goal [--session KEY] [--state-root DIR] pause            Pause goal
-  agent-goal [--session KEY] [--state-root DIR] resume           Resume goal
-  agent-goal [--session KEY] [--state-root DIR] clear            Clear goal
+  goal-runner [--session KEY] [--state-root DIR]                  Show current goal
+  goal-runner [--session KEY] [--state-root DIR] <objective>      Start/update goal
+  goal-runner [--session KEY] [--state-root DIR] pause            Pause goal
+  goal-runner [--session KEY] [--state-root DIR] resume           Resume goal
+  goal-runner [--session KEY] [--state-root DIR] clear            Clear goal
+
+Legacy alias: agent-goal
 
 The CLI is a smoke/debug surface. Full Codex-compatible behavior requires a harness adapter such as the Pi bridge.`);
 }

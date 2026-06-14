@@ -1,4 +1,4 @@
-# agent-goal-runtime
+# goal-runner
 
 Portable Codex-compatible `/goal` runtime with Pi and OpenCode bridges.
 
@@ -176,7 +176,7 @@ The package declares a compiled Pi extension in `package.json`:
 Build before installing or loading it:
 
 ```bash
-cd /home/shawn/projects/active/agent-goal-runtime
+cd /home/shawn/projects/active/goal-runner
 npm install
 npm run build
 ```
@@ -184,15 +184,15 @@ npm run build
 Then install or load this directory as a Pi package:
 
 ```bash
-pi install /home/shawn/projects/active/agent-goal-runtime
+pi install /home/shawn/projects/active/goal-runner
 # or one-off:
-pi -e /home/shawn/projects/active/agent-goal-runtime/dist/adapters/pi/index.js
+pi -e /home/shawn/projects/active/goal-runner/dist/adapters/pi/index.js
 ```
 
 After the GitHub repository is published, install the pinned release from GitHub:
 
 ```bash
-pi install git:github.com/a5345534/agent-goal-runtime@v0.1.0
+pi install git:github.com/a5345534/goal-runner@v0.1.0
 ```
 
 The Pi bridge registers these commands and model-visible tools:
@@ -226,7 +226,7 @@ DAG nodes can also declare a generic test-spec validation contract through `kind
 
 Bare `/goal` shows the current/default goal's objective, status, elapsed time, token usage/budget, goal-turn count, and currently useful subcommands. `/goal status` groups the objective, workspace, session, DAG summary, DAG nodes, and subagent records into readable sections with shortened ids/paths, and reports stalled DAGs when an otherwise active goal has only terminal failed/blocked nodes. `/goal monitor` opens a live dashboard that refreshes DAG and subagent state every second, showing node/subagent status counts, runtime duration, last activity age, branch/workspace, validation, notes, and transcript tail. The monitor has separate `DAG / Subagents` and `Transcript tail` panes: press `d` or `t` to focus a pane, `↑↓` to scroll the focused pane, `PageUp`/`PageDown` for page scrolling, `Home` for top, and `End` for DAG bottom or transcript live tail. `/goal list` lists recent materialized goals from the portable registry. Selecting a goal opens the same read-only monitor and keeps lifecycle actions as explicit buttons/commands rather than free-form input into the goal session. Targeted commands resolve full or short goal ids and reject ambiguous prefixes; when the goal-ref is omitted, commands prefer the current controller session's goal, then the latest non-terminal goal, then the latest goal. The Pi status line uses compact status strings such as `🎯 active 18k/100k`, `🎯 paused`, `🎯 blocked`, `🎯 budget 100k/100k`, or `🎯 complete`.
 
-Hidden continuation is implemented with Pi custom hidden messages using `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })`, guarded by runtime continuation reservations and adapter-side `attemptId` idempotency. The Pi bridge keeps the portable SQLite store canonical and mirrors goal snapshots, reservations, metadata, clears, and ledger events into Pi custom session entries (`agent-goal-runtime-state`) so Pi session history can carry host-native goal traces without becoming mandatory storage for non-Pi adapters. While a goal is active, the Pi bridge also injects an ordinary-turn reminder that preserves the full objective as untrusted user-provided task data and explicitly keeps system/developer/workspace/tool policy above the goal. If Pi reports a goal turn ending with `aborted` or `error`, the bridge pauses the goal and requires `/goal resume` before automatic continuation resumes. When the failed turn includes partial assistant text or tool-call traces, the bridge preserves a hidden recovery context that treats the excerpt as untrusted transcript evidence for the later resume. Queued hidden continuations carry an adapter marker with goal id, observed update timestamp, and attempt id. Stale continuations are rewritten into non-runnable bookkeeping, and older duplicate continuations for the same active goal are superseded so only the latest matching continuation remains runnable.
+Hidden continuation is implemented with Pi custom hidden messages using `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })`, guarded by runtime continuation reservations and adapter-side `attemptId` idempotency. The Pi bridge keeps the portable SQLite store canonical and mirrors goal snapshots, reservations, metadata, clears, and ledger events into Pi custom session entries (`goal-runner-state`) so Pi session history can carry host-native goal traces without becoming mandatory storage for non-Pi adapters. While a goal is active, the Pi bridge also injects an ordinary-turn reminder that preserves the full objective as untrusted user-provided task data and explicitly keeps system/developer/workspace/tool policy above the goal. If Pi reports a goal turn ending with `aborted` or `error`, the bridge pauses the goal and requires `/goal resume` before automatic continuation resumes. When the failed turn includes partial assistant text or tool-call traces, the bridge preserves a hidden recovery context that treats the excerpt as untrusted transcript evidence for the later resume. Queued hidden continuations carry an adapter marker with goal id, observed update timestamp, and attempt id. Stale continuations are rewritten into non-runnable bookkeeping, and older duplicate continuations for the same active goal are superseded so only the latest matching continuation remains runnable.
 
 Automatic continuation is progress-gated: a completed turn only queues another hidden continuation when the adapter reports meaningful progress such as task-relevant read/write/edit/bash/test activity. Pure chat, repeated status checks, or rejected completion attempts leave the goal active but return control to the user instead of spinning.
 
@@ -277,9 +277,9 @@ The opencode adapter is loaded by OpenCode's plugin system (it is
 install the pinned release into the user's opencode config with:
 
 ```bash
-opencode plugin install github:a5345534/agent-goal-runtime@v0.1.0
+opencode plugin install github:a5345534/goal-runner@v0.1.0
 # or for a local development build:
-opencode plugin install /home/shawn/projects/active/agent-goal-runtime
+opencode plugin install /home/shawn/projects/active/goal-runner
 ```
 
 The adapter is reachable from a built checkout through:

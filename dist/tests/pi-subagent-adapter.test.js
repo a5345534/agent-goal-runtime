@@ -60,7 +60,7 @@ function fakeLauncher() {
     return { launcher, launches, prompts, stopped };
 }
 test("Pi background session launcher rejects missing workspaces before spawning", async () => {
-    const missing = join(tmpdir(), `agent-goal-runtime-missing-${Date.now()}`);
+    const missing = join(tmpdir(), `goal-runner-missing-${Date.now()}`);
     await assert.rejects(launchPiRpcBackgroundGoalSession({ cwd: missing, sessionId: "missing-cwd", sessionName: "missing cwd" }), /cwd does not exist/);
 });
 test("Pi harness subagent adapter starts a detached Pi session and sends the initial prompt", async () => {
@@ -244,7 +244,7 @@ test("Pi subagent session inspection streams large files and skips runtime state
             }),
             ...Array.from({ length: 24 }, (_, index) => JSON.stringify({
                 type: "custom",
-                customType: "agent-goal-runtime-state",
+                customType: "goal-runner-state",
                 data: { index, payload: hugeMirrorPayload },
                 timestamp: `2026-06-02T00:00:${String(index + 2).padStart(2, "0")}.000Z`,
             })),
@@ -376,7 +376,7 @@ test("Pi subagent session inspection ignores runtime state mirror timestamps for
                 },
                 timestamp: "2026-06-02T00:00:01.000Z",
             }),
-            JSON.stringify({ type: "custom", customType: "agent-goal-runtime-state", data: { kind: "goal_subagent" }, timestamp: "2026-06-02T00:19:58.000Z" }),
+            JSON.stringify({ type: "custom", customType: "goal-runner-state", data: { kind: "goal_subagent" }, timestamp: "2026-06-02T00:19:58.000Z" }),
             JSON.stringify({ type: "custom_message", customType: "agent-goal-runtime-state", data: { kind: "goal_subagent" }, timestamp: "2026-06-02T00:19:59.000Z" }),
         ].join("\n"),
     });
@@ -394,7 +394,7 @@ test("Pi subagent session inspection asks for follow-up when a live session is s
             JSON.stringify({ type: "message", message: { role: "user", content: "start" }, timestamp: "2026-06-02T00:00:00.000Z" }),
             JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "git status" } }] }, timestamp: "2026-06-02T00:01:00.000Z" }),
             JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "call-1", toolName: "bash", content: [{ type: "text", text: "ok" }] }, timestamp: "2026-06-02T00:01:30.000Z" }),
-            JSON.stringify({ type: "custom", customType: "agent-goal-runtime-state", data: { kind: "reservation_cleared" }, timestamp: "2026-06-02T00:01:30.000Z" }),
+            JSON.stringify({ type: "custom", customType: "goal-runner-state", data: { kind: "reservation_cleared" }, timestamp: "2026-06-02T00:01:30.000Z" }),
         ].join("\n"),
     });
     assert.equal(state.status, "needsFollowup");

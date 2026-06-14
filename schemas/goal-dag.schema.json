@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/a5345534/agent-goal-runtime/schemas/goal-dag.schema.json",
+  "$id": "https://github.com/a5345534/goal-runner/schemas/goal-dag.schema.json",
   "title": "Agent Goal DAG",
   "type": "object",
   "additionalProperties": false,

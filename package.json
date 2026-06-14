@@ -1,16 +1,17 @@
 {
-  "name": "agent-goal-runtime",
+  "name": "goal-runner",
   "version": "0.1.1",
   "type": "module",
   "description": "Portable Codex-compatible /goal runtime with Pi and OpenCode adapters.",
   "keywords": [
     "pi-package",
     "opencode-plugin",
-    "agent-goal-runtime",
+    "goal-runner",
     "codex-goal",
     "slash-command"
   ],
   "bin": {
+    "goal-runner": "./dist/cli.js",
     "agent-goal": "./dist/cli.js"
   },
   "exports": {
@@ -46,12 +47,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/a5345534/agent-goal-runtime.git"
+    "url": "git+https://github.com/a5345534/goal-runner.git"
   },
   "bugs": {
-    "url": "https://github.com/a5345534/agent-goal-runtime/issues"
+    "url": "https://github.com/a5345534/goal-runner/issues"
   },
-  "homepage": "https://github.com/a5345534/agent-goal-runtime#readme",
+  "homepage": "https://github.com/a5345534/goal-runner#readme",
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",

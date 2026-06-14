@@ -34,7 +34,7 @@ test("rewrites stale Pi continuation messages instead of leaving them runnable",
   const messages = [
     {
       role: "custom",
-      customType: "agent-goal-runtime",
+      customType: "goal-runner",
       content: "Continue old",
       details: { kind: "goal_continuation", goalId: "goal-old", goalUpdatedAt: "old" },
     },
@@ -47,17 +47,33 @@ test("rewrites stale Pi continuation messages instead of leaving them runnable",
   assert.match(String(result.messages[0]?.content), /stale/);
 });
 
-test("supersedes older active Pi continuations and keeps the newest runnable", () => {
+test("rewrites legacy Pi continuation message types", () => {
   const messages = [
     {
       role: "custom",
       customType: "agent-goal-runtime",
+      content: "Continue old legacy",
+      details: { kind: "goal_continuation", goalId: "goal-old", goalUpdatedAt: "old" },
+    },
+  ];
+
+  const result = rewritePiMessages(messages, goal);
+
+  assert.equal(result.changed, true);
+  assert.equal((result.messages[0]?.details as { kind?: string } | undefined)?.kind, "stale_goal_continuation");
+});
+
+test("supersedes older active Pi continuations and keeps the newest runnable", () => {
+  const messages = [
+    {
+      role: "custom",
+      customType: "goal-runner",
       content: "old current",
       details: { kind: "goal_continuation", goalId: goal.goalId, goalUpdatedAt: goal.updatedAt, attemptId: "a1" },
     },
     {
       role: "custom",
-      customType: "agent-goal-runtime",
+      customType: "goal-runner",
       content: "new current",
       details: { kind: "goal_continuation", goalId: goal.goalId, goalUpdatedAt: goal.updatedAt, attemptId: "a2" },
     },

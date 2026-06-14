@@ -3,6 +3,7 @@ import { closeSync, existsSync, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { launchPiRpcBackgroundGoalSession, } from "./background-session.js";
 import { readPiBackgroundRunnerInventory } from "./runner-ops.js";
+import { isPiGoalSessionEntryType } from "./session-store.js";
 const RESULT_MARKER = /(?:^|\n)\s*SUBAGENT_RESULT\s*:\s*([\s\S]*?)(?=\n\s*SUBAGENT_[A-Z_]+\s*:|$)/i;
 const BLOCKED_MARKER = /(?:^|\n)\s*SUBAGENT_BLOCKED\s*:\s*([\s\S]*?)(?=\n\s*SUBAGENT_[A-Z_]+\s*:|$)/i;
 const STATUS_BLOCKED_MARKER = /(?:^|\n)\s*SUBAGENT_STATUS\s*:\s*blocked\b/i;
@@ -259,10 +260,10 @@ function parsePiSessionLine(rawLine, parsed) {
     }
 }
 function looksLikeRuntimeStateMirrorLine(rawLine) {
-    return rawLine.includes('"agent-goal-runtime-state"') && rawLine.includes('"custom"');
+    return rawLine.includes('"custom"') && (rawLine.includes('"goal-runner-state"') || rawLine.includes('"agent-goal-runtime-state"'));
 }
 function isRuntimeStateMirrorEntry(entry) {
-    return (entry.type === "custom" || entry.type === "custom_message") && entry.customType === "agent-goal-runtime-state";
+    return (entry.type === "custom" || entry.type === "custom_message") && isPiGoalSessionEntryType(entry.customType);
 }
 function withInspectionMetadata(state, parsed, extra = {}) {
     return { ...state, metadata: { ...(state.metadata ?? {}), entryCount: parsed.entryCount, messageCount: parsed.messageCount, ...extra } };

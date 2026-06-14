@@ -1,9 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GoalRuntime, MemoryGoalStore, SQLiteGoalStore, type HiddenGoalTurnRequest, type WorkspaceProfile } from "../core/index.js";
+import { GoalRuntime, MemoryGoalStore, SQLiteGoalStore, resolveDefaultStateRoot, type HiddenGoalTurnRequest, type WorkspaceProfile } from "../core/index.js";
+
+test("default state root uses goal-runner and falls back to existing legacy state", () => {
+  const previousAgentGoalStateHome = process.env.AGENT_GOAL_STATE_HOME;
+  const previousXdgStateHome = process.env.XDG_STATE_HOME;
+  const root = mkdtempSync(join(tmpdir(), "goal-runner-state-root-"));
+  try {
+    delete process.env.AGENT_GOAL_STATE_HOME;
+    process.env.XDG_STATE_HOME = root;
+    assert.equal(resolveDefaultStateRoot(), join(root, "goal-runner"));
+
+    mkdirSync(join(root, "agent-goal-runtime"));
+    assert.equal(resolveDefaultStateRoot(), join(root, "agent-goal-runtime"));
+
+    mkdirSync(join(root, "goal-runner"));
+    assert.equal(resolveDefaultStateRoot(), join(root, "goal-runner"));
+  } finally {
+    if (previousAgentGoalStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;
+    else process.env.AGENT_GOAL_STATE_HOME = previousAgentGoalStateHome;
+    if (previousXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = previousXdgStateHome;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("runtime keeps one current goal per session", async () => {
   const runtime = new GoalRuntime({ store: new MemoryGoalStore() });
@@ -346,7 +369,7 @@ test("completion audit errors keep goal active and record an audit error", async
 });
 
 test("sqlite store persists ledger events across reopen", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agent-goal-runtime-test-"));
+  const root = mkdtempSync(join(tmpdir(), "goal-runner-test-"));
   const dbPath = join(root, "goals.sqlite");
   try {
     const store = new SQLiteGoalStore({ dbPath });

@@ -10,8 +10,14 @@ import type {
   WorkspaceProfile,
 } from "../../core/index.js";
 
-export const PI_GOAL_SESSION_ENTRY_TYPE = "agent-goal-runtime-state";
+export const PI_GOAL_SESSION_ENTRY_TYPE = "goal-runner-state";
+export const PI_LEGACY_GOAL_SESSION_ENTRY_TYPE = "agent-goal-runtime-state";
+export const PI_GOAL_SESSION_ENTRY_TYPES = new Set([PI_GOAL_SESSION_ENTRY_TYPE, PI_LEGACY_GOAL_SESSION_ENTRY_TYPE]);
 export const PI_GOAL_SESSION_ENTRY_VERSION = 1;
+
+export function isPiGoalSessionEntryType(value: unknown): value is string {
+  return typeof value === "string" && PI_GOAL_SESSION_ENTRY_TYPES.has(value);
+}
 
 export type PiGoalSessionEntryData =
   | { version: 1; kind: "goal_snapshot"; sessionKey: string; goal: GoalRecord; at: string }
@@ -201,7 +207,7 @@ export class PiSessionGoalMirrorStore implements GoalStore {
 export function readPiGoalSessionMirrorEntries(entries: Array<Record<string, unknown>>): PiGoalSessionEntryData[] {
   const mirrored: PiGoalSessionEntryData[] = [];
   for (const entry of entries) {
-    if (entry.type !== "custom" || entry.customType !== PI_GOAL_SESSION_ENTRY_TYPE) continue;
+    if (entry.type !== "custom" || !isPiGoalSessionEntryType(entry.customType)) continue;
     const data = entry.data;
     if (isPiGoalSessionEntryData(data)) mirrored.push(data);
   }

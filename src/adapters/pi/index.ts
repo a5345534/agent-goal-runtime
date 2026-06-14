@@ -47,6 +47,8 @@ import { PI_GOAL_SESSION_ENTRY_TYPE, PiSessionGoalMirrorStore } from "./session-
 import {
   archivePiBackgroundRunnerDirs,
   filterPiBackgroundRunnersForSubagent,
+  PI_BACKGROUND_RUNNER_DIR_PREFIX,
+  PI_LEGACY_BACKGROUND_RUNNER_DIR_PREFIX,
   readPiBackgroundRunnerInventory,
   signalPiBackgroundRunners,
 } from "./runner-ops.js";
@@ -60,7 +62,9 @@ import {
   type WorkspaceValidationResult,
 } from "./workspace.js";
 
-const EXTENSION_MESSAGE_TYPE = "agent-goal-runtime";
+const EXTENSION_MESSAGE_TYPE = "goal-runner";
+const LEGACY_EXTENSION_MESSAGE_TYPE = "agent-goal-runtime";
+const EXTENSION_MESSAGE_TYPES = new Set([EXTENSION_MESSAGE_TYPE, LEGACY_EXTENSION_MESSAGE_TYPE]);
 const HIDDEN_CONTEXT_KIND = "goal_continuation";
 const STALE_CONTINUATION_KIND = "stale_goal_continuation";
 const SUPERSEDED_CONTINUATION_KIND = "superseded_goal_continuation";
@@ -1067,10 +1071,21 @@ function readPiGoalMaxSubagents(): number {
 
 // ── Runtime-config file (writable from /goal config) ──
 
-const PI_GOAL_RUNTIME_CONFIG_PATH = path.join(
+const PI_GOAL_RUNNER_CONFIG_PATH = path.join(
+  process.env.HOME ?? process.env.USERPROFILE ?? "/tmp",
+  ".pi", "agent", "goal-runner-config.json",
+);
+const PI_LEGACY_GOAL_RUNTIME_CONFIG_PATH = path.join(
   process.env.HOME ?? process.env.USERPROFILE ?? "/tmp",
   ".pi", "agent", "goal-runtime-config.json",
 );
+
+function resolvePiGoalConfigPath(): string {
+  if (!fs.existsSync(PI_GOAL_RUNNER_CONFIG_PATH) && fs.existsSync(PI_LEGACY_GOAL_RUNTIME_CONFIG_PATH)) {
+    return PI_LEGACY_GOAL_RUNTIME_CONFIG_PATH;
+  }
+  return PI_GOAL_RUNNER_CONFIG_PATH;
+}
 
 interface PiGoalRuntimeConfig {
   maxSubagents?: string;
@@ -1082,11 +1097,12 @@ let _cachedPiGoalRuntimeConfig: PiGoalRuntimeConfig | undefined;
 let _cachedPath: string | undefined;
 
 function readPiGoalConfig(): PiGoalRuntimeConfig {
-  if (_cachedPath === PI_GOAL_RUNTIME_CONFIG_PATH && _cachedPiGoalRuntimeConfig !== undefined) {
+  const configPath = resolvePiGoalConfigPath();
+  if (_cachedPath === configPath && _cachedPiGoalRuntimeConfig !== undefined) {
     return _cachedPiGoalRuntimeConfig;
   }
   try {
-    const raw = fs.readFileSync(PI_GOAL_RUNTIME_CONFIG_PATH, "utf8");
+    const raw = fs.readFileSync(configPath, "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
       _cachedPiGoalRuntimeConfig = parsed as PiGoalRuntimeConfig;
@@ -1096,7 +1112,7 @@ function readPiGoalConfig(): PiGoalRuntimeConfig {
   } catch {
     _cachedPiGoalRuntimeConfig = {};
   }
-  _cachedPath = PI_GOAL_RUNTIME_CONFIG_PATH;
+  _cachedPath = configPath;
   return _cachedPiGoalRuntimeConfig;
 }
 
@@ -1107,8 +1123,9 @@ function writePiGoalConfig(patch: PiGoalRuntimeConfig): void {
   for (const key of Object.keys(patch)) {
     if ((patch as Record<string, unknown>)[key] === null) delete (merged as Record<string, unknown>)[key];
   }
-  fs.mkdirSync(path.dirname(PI_GOAL_RUNTIME_CONFIG_PATH), { recursive: true });
-  fs.writeFileSync(PI_GOAL_RUNTIME_CONFIG_PATH, JSON.stringify(merged, null, 2), "utf8");
+  const configPath = resolvePiGoalConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(merged, null, 2), "utf8");
   _cachedPiGoalRuntimeConfig = undefined;
   _cachedPath = undefined;
 }
@@ -1157,7 +1174,7 @@ async function handleGoalConfigCommand(ctx: ExtensionCommandContext, args: strin
       const label = { maxSubagents: "max-subagents", maxAutoRetries: "max-auto-retries", controllerPollMs: "controller-poll-ms" }[k] ?? k;
       lines.push(`  ${label}: ${formatGoalConfigValue(k)}`);
     }
-    lines.push("", `Config file: ${PI_GOAL_RUNTIME_CONFIG_PATH}`);
+    lines.push("", `Config file: ${resolvePiGoalConfigPath()}`);
     lines.push("Environment variables override config file values.");
     lines.push("Use /goal config <key> clear to remove a config value.");
     ctx.ui.notify(lines.join("\n"), "info");
@@ -1408,7 +1425,7 @@ async function runGoalMonitorRunnerOperation(
   const liveCount = matches.filter((record) => record.runnerAlive || record.childAlive).length;
   const ok = await ctx.ui.confirm(
     "Archive runner temp dirs?",
-    `${subagentId}\n\nThis moves stopped /tmp/agent-goal-runtime-bg-* dirs into the runtime archive. Live dirs are skipped. Session transcripts and worktrees are not deleted.\n\nMatched dirs: ${matches.length}; live dirs: ${liveCount}`,
+    `${subagentId}\n\nThis moves stopped /tmp/${PI_BACKGROUND_RUNNER_DIR_PREFIX}* dirs into the runtime archive. Legacy /tmp/${PI_LEGACY_BACKGROUND_RUNNER_DIR_PREFIX}* dirs are also recognized. Live dirs are skipped. Session transcripts and worktrees are not deleted.\n\nMatched dirs: ${matches.length}; live dirs: ${liveCount}`,
   );
   if (!ok) return;
   const result = archivePiBackgroundRunnerDirs(matches);
@@ -2503,7 +2520,7 @@ export function extractGoalContinuationMetadataFromText(content: unknown): GoalC
 }
 
 function continuationMetadataFromMessage(message: Record<string, unknown>): GoalContinuationMetadata | undefined {
-  if (message.role !== "custom" || message.customType !== EXTENSION_MESSAGE_TYPE) return undefined;
+  if (message.role !== "custom" || typeof message.customType !== "string" || !EXTENSION_MESSAGE_TYPES.has(message.customType)) return undefined;
   const details = message.details as Record<string, unknown> | undefined;
   if (details?.kind === HIDDEN_CONTEXT_KIND && typeof details.goalId === "string") {
     return {
