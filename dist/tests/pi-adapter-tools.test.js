@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import goalPiExtension, { setPiBackgroundGoalSessionLauncherForTests } from "../adapters/pi/index.js";
+import { GoalRuntime, SQLiteGoalStore } from "../core/index.js";
 function git(cwd, args) {
     return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
@@ -795,6 +796,103 @@ test("Pi session start recovers active goal pollers from durable state", async (
             process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = previousPollMs;
         rmSync(dir, { recursive: true, force: true });
         rmSync(workspace, { recursive: true, force: true });
+    }
+});
+test("Pi session start refreshes completed goal-owned session status", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "goal-session-complete-refresh-"));
+    const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
+    process.env.AGENT_GOAL_STATE_HOME = dir;
+    const originFile = "/origin/session.jsonl";
+    const executionFile = "/execution/goal-session.jsonl";
+    const originSessionKey = `pi:${originFile}`;
+    const executionSessionKey = `pi:${executionFile}`;
+    const objective = "Finished owner goal";
+    const seedStore = new SQLiteGoalStore();
+    const seedRuntime = new GoalRuntime({ store: seedStore });
+    try {
+        const created = await seedRuntime.createOrReplaceGoal(executionSessionKey, objective);
+        assert.ok(created.goal);
+        await seedRuntime.saveGoalSessionMetadata({
+            sessionKey: executionSessionKey,
+            goalId: created.goal.goalId,
+            originSessionKey,
+            sessionFile: executionFile,
+            sessionName: "goal completed refresh",
+            legacySessionBound: false,
+            createdAt: created.goal.createdAt,
+            updatedAt: created.goal.updatedAt,
+        });
+        await seedRuntime.toolUpdateGoal(executionSessionKey, "complete");
+    }
+    finally {
+        await seedStore.close?.();
+    }
+    const handlers = new Map();
+    const pi = {
+        registerTool() { },
+        registerCommand() { },
+        on(event, handler) {
+            const list = handlers.get(event) ?? [];
+            list.push(handler);
+            handlers.set(event, list);
+        },
+        appendEntry() { },
+        sendMessage() { },
+    };
+    const makeCtx = (sessionFile, statuses, widgets) => ({
+        hasUI: true,
+        cwd: dir,
+        ui: {
+            notify() { },
+            setStatus(_name, value) {
+                if (value)
+                    statuses.push(value);
+            },
+            setWidget(_name, lines) {
+                if (lines?.[0])
+                    widgets.push(lines[0]);
+            },
+            confirm: async () => true,
+            editor: async () => undefined,
+            select: async () => undefined,
+            custom: async () => undefined,
+        },
+        sessionManager: {
+            getSessionFile: () => sessionFile,
+            getSessionName: () => sessionFile,
+        },
+        isIdle: () => true,
+        hasPendingMessages: () => false,
+    });
+    const otherStatuses = [];
+    const otherWidgets = [];
+    const originStatuses = [];
+    const originWidgets = [];
+    const executionStatuses = [];
+    const executionWidgets = [];
+    try {
+        goalPiExtension(pi);
+        for (const handler of handlers.get("session_start") ?? [])
+            await handler({}, makeCtx("/other/session.jsonl", otherStatuses, otherWidgets));
+        assert.deepEqual(otherStatuses, []);
+        assert.deepEqual(otherWidgets, []);
+        for (const handler of handlers.get("session_start") ?? [])
+            await handler({}, makeCtx(originFile, originStatuses, originWidgets));
+        assert.equal(originStatuses.at(-1), "🎯 complete");
+        assert.equal(originWidgets.at(-1), `/goal complete: ${objective}`);
+        for (const handler of handlers.get("session_start") ?? [])
+            await handler({}, makeCtx(executionFile, executionStatuses, executionWidgets));
+        assert.equal(executionStatuses.at(-1), "🎯 complete");
+        assert.equal(executionWidgets.at(-1), `/goal complete: ${objective}`);
+        for (const handler of handlers.get("session_shutdown") ?? [])
+            await handler({ type: "session_shutdown", reason: "quit" });
+    }
+    finally {
+        if (previousStateHome === undefined)
+            delete process.env.AGENT_GOAL_STATE_HOME;
+        else
+            process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+        rmSync(dir, { recursive: true, force: true });
     }
 });
 test("Pi goal start can load an explicit DAG file", async () => {

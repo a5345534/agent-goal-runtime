@@ -129,19 +129,21 @@ export default function goalPiExtension(pi: ExtensionAPI) {
         );
       },
       notifyGoalUpdated: async (goal) => {
-        const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), goal.sessionKey);
-        if (ctx) showGoalStatus(ctx, goal);
+        for (const ctx of await resolvePiGoalUiContexts(store, sessionContexts, requireContext(lastCtx), goal.sessionKey)) {
+          showGoalStatus(ctx, goal);
+        }
       },
       notifyGoalCleared: async (sessionKey) => {
-        const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), sessionKey);
-        if (!ctx) return;
-        ctx.ui?.setStatus?.("goal", undefined);
-        ctx.ui?.setWidget?.("goal", undefined);
-        ctx.ui?.notify?.("Goal cleared", "info");
+        for (const ctx of await resolvePiGoalUiContexts(store, sessionContexts, requireContext(lastCtx), sessionKey)) {
+          ctx.ui?.setStatus?.("goal", undefined);
+          ctx.ui?.setWidget?.("goal", undefined);
+          ctx.ui?.notify?.("Goal cleared", "info");
+        }
       },
       notifyGoalWarning: async (sessionKey, message) => {
-        const ctx = await resolvePiGoalUiContext(store, sessionContexts, requireContext(lastCtx), sessionKey);
-        ctx?.ui?.notify?.(message, "warning");
+        for (const ctx of await resolvePiGoalUiContexts(store, sessionContexts, requireContext(lastCtx), sessionKey)) {
+          ctx.ui?.notify?.(message, "warning");
+        }
       },
       collectCompletionEvidence: async (goal) => buildCompletionEvidence(requireContext(lastCtx), goal),
       getCompletionPolicyContext: async (goal) => buildCompletionPolicyContext(requireContext(lastCtx), goal),
@@ -245,8 +247,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     const sessionKey = resolveSessionKey(ctx);
     await runtime.sessionResumed(sessionKey);
     await resumePiGoalControllerPollingLoops(runtime, ctx, readPiGoalControllerDefaults(pi));
-    const result = await runtime.getGoal(sessionKey);
-    if (result.goal) showGoalStatus(ctx, result.goal);
+    await showPiGoalSessionStatus(runtime, ctx);
   });
 
   pi.on("before_agent_start", async (event: { systemPrompt: string; prompt?: string }, ctx: ExtensionContext) => {
@@ -371,28 +372,28 @@ function rememberPiGoalSessionContext<T extends ExtensionContext | ExtensionComm
   return ctx;
 }
 
-async function resolvePiGoalUiContext(
+async function resolvePiGoalUiContexts(
   store: PiSessionGoalMirrorStore,
   contexts: Map<string, ExtensionContext | ExtensionCommandContext>,
   fallback: ExtensionContext | ExtensionCommandContext,
   sessionKey: string,
-): Promise<ExtensionContext | ExtensionCommandContext | undefined> {
+): Promise<Array<ExtensionContext | ExtensionCommandContext>> {
   const fallbackKey = resolveSessionKey(fallback);
-  if (sessionKey === fallbackKey) return hasPiGoalUi(fallback) ? fallback : undefined;
+  const keys = new Set([sessionKey]);
   try {
     const metadata = await store.getGoalSessionMetadata(sessionKey);
-    const originSessionKey = metadata?.originSessionKey;
-    if (originSessionKey) {
-      if (originSessionKey === fallbackKey) return hasPiGoalUi(fallback) ? fallback : undefined;
-      const originCtx = contexts.get(originSessionKey);
-      if (originCtx && hasPiGoalUi(originCtx)) return originCtx;
-    }
+    if (metadata?.originSessionKey) keys.add(metadata.originSessionKey);
   } catch {
     // Fall back to known live contexts below.
   }
-  const sessionCtx = contexts.get(sessionKey);
-  if (sessionCtx && hasPiGoalUi(sessionCtx)) return sessionCtx;
-  return undefined;
+  if (keys.has(fallbackKey)) contexts.set(fallbackKey, fallback);
+
+  const resolved = new Map<string, ExtensionContext | ExtensionCommandContext>();
+  for (const key of keys) {
+    const ctx = key === fallbackKey ? fallback : contexts.get(key);
+    if (ctx && hasPiGoalUi(ctx)) resolved.set(key, ctx);
+  }
+  return [...resolved.values()];
 }
 
 function hasPiGoalUi(ctx: ExtensionContext | ExtensionCommandContext): boolean {
@@ -402,6 +403,18 @@ function hasPiGoalUi(ctx: ExtensionContext | ExtensionCommandContext): boolean {
 function shouldUsePiContextForGoalPoller(ctx: ExtensionContext | ExtensionCommandContext, goal: Pick<GoalSummary, "sessionKey" | "originSessionKey">): boolean {
   const currentSessionKey = resolveSessionKey(ctx);
   return goal.sessionKey === currentSessionKey || goal.originSessionKey === currentSessionKey;
+}
+
+async function showPiGoalSessionStatus(runtime: GoalRuntime, ctx: ExtensionContext | ExtensionCommandContext): Promise<void> {
+  const sessionKey = resolveSessionKey(ctx);
+  const current = (await runtime.getGoal(sessionKey)).goal;
+  if (current) {
+    showGoalStatus(ctx, current);
+    return;
+  }
+
+  const owned = (await runtime.listGoalSummaries()).find((goal) => goal.sessionKey === sessionKey || goal.originSessionKey === sessionKey);
+  if (owned) showGoalStatus(ctx, owned);
 }
 
 function safeNotify(ctx: ExtensionContext | ExtensionCommandContext, message: string, type: "info" | "warning" | "error"): void {
@@ -2704,12 +2717,14 @@ function unescapeAttribute(value: string): string {
   return value.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
 
-function showGoalStatus(ctx: ExtensionContext | ExtensionCommandContext, goal: GoalRecord): void {
+type GoalStatusDisplayRecord = Pick<GoalRecord, "objective" | "status" | "tokenBudget" | "tokensUsed" | "timeUsedSeconds">;
+
+function showGoalStatus(ctx: ExtensionContext | ExtensionCommandContext, goal: GoalStatusDisplayRecord): void {
   ctx.ui?.setStatus?.("goal", compactGoalStatus(goal));
   ctx.ui?.setWidget?.("goal", [`/goal ${goal.status}: ${goal.objective}`], { placement: "belowEditor" });
 }
 
-function compactGoalStatus(goal: GoalRecord): string {
+function compactGoalStatus(goal: GoalStatusDisplayRecord): string {
   switch (goal.status) {
     case "active":
       return goal.tokenBudget === undefined

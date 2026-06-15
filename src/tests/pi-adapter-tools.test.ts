@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import goalPiExtension, { setPiBackgroundGoalSessionLauncherForTests } from "../adapters/pi/index.js";
-import type { GoalDagNode } from "../core/index.js";
+import { GoalRuntime, SQLiteGoalStore, type GoalDagNode } from "../core/index.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -780,6 +780,100 @@ test("Pi session start recovers active goal pollers from durable state", async (
     else process.env.AGENT_GOAL_PI_CONTROLLER_POLL_MS = previousPollMs;
     rmSync(dir, { recursive: true, force: true });
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Pi session start refreshes completed goal-owned session status", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "goal-session-complete-refresh-"));
+  const previousStateHome = process.env.AGENT_GOAL_STATE_HOME;
+  process.env.AGENT_GOAL_STATE_HOME = dir;
+  const originFile = "/origin/session.jsonl";
+  const executionFile = "/execution/goal-session.jsonl";
+  const originSessionKey = `pi:${originFile}`;
+  const executionSessionKey = `pi:${executionFile}`;
+  const objective = "Finished owner goal";
+
+  const seedStore = new SQLiteGoalStore();
+  const seedRuntime = new GoalRuntime({ store: seedStore });
+  try {
+    const created = await seedRuntime.createOrReplaceGoal(executionSessionKey, objective);
+    assert.ok(created.goal);
+    await seedRuntime.saveGoalSessionMetadata({
+      sessionKey: executionSessionKey,
+      goalId: created.goal.goalId,
+      originSessionKey,
+      sessionFile: executionFile,
+      sessionName: "goal completed refresh",
+      legacySessionBound: false,
+      createdAt: created.goal.createdAt,
+      updatedAt: created.goal.updatedAt,
+    });
+    await seedRuntime.toolUpdateGoal(executionSessionKey, "complete");
+  } finally {
+    await seedStore.close?.();
+  }
+
+  const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+  const pi = {
+    registerTool() {},
+    registerCommand() {},
+    on(event: string, handler: (...args: unknown[]) => unknown) {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    },
+    appendEntry() {},
+    sendMessage() {},
+  };
+  const makeCtx = (sessionFile: string, statuses: string[], widgets: string[]) => ({
+    hasUI: true,
+    cwd: dir,
+    ui: {
+      notify() {},
+      setStatus(_name: string, value?: string) {
+        if (value) statuses.push(value);
+      },
+      setWidget(_name: string, lines?: string[]) {
+        if (lines?.[0]) widgets.push(lines[0]);
+      },
+      confirm: async () => true,
+      editor: async () => undefined,
+      select: async () => undefined,
+      custom: async () => undefined,
+    },
+    sessionManager: {
+      getSessionFile: () => sessionFile,
+      getSessionName: () => sessionFile,
+    },
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+  });
+  const otherStatuses: string[] = [];
+  const otherWidgets: string[] = [];
+  const originStatuses: string[] = [];
+  const originWidgets: string[] = [];
+  const executionStatuses: string[] = [];
+  const executionWidgets: string[] = [];
+
+  try {
+    goalPiExtension(pi as never);
+    for (const handler of handlers.get("session_start") ?? []) await handler({}, makeCtx("/other/session.jsonl", otherStatuses, otherWidgets) as never);
+    assert.deepEqual(otherStatuses, []);
+    assert.deepEqual(otherWidgets, []);
+
+    for (const handler of handlers.get("session_start") ?? []) await handler({}, makeCtx(originFile, originStatuses, originWidgets) as never);
+    assert.equal(originStatuses.at(-1), "🎯 complete");
+    assert.equal(originWidgets.at(-1), `/goal complete: ${objective}`);
+
+    for (const handler of handlers.get("session_start") ?? []) await handler({}, makeCtx(executionFile, executionStatuses, executionWidgets) as never);
+    assert.equal(executionStatuses.at(-1), "🎯 complete");
+    assert.equal(executionWidgets.at(-1), `/goal complete: ${objective}`);
+
+    for (const handler of handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "quit" });
+  } finally {
+    if (previousStateHome === undefined) delete process.env.AGENT_GOAL_STATE_HOME;
+    else process.env.AGENT_GOAL_STATE_HOME = previousStateHome;
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
