@@ -129,7 +129,7 @@ export default function goalPiExtension(pi) {
         promptGuidelines: ["Use get_goal when you need to inspect the active /goal state before deciding whether to continue, complete, or block it."],
         async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
             lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
-            const result = await runtime.toolGetGoal(resolveSessionKey(ctx));
+            const result = await getPiSessionGoalToolResult(runtime, ctx);
             return { content: [{ type: "text", text: result.message }], details: result.goal ?? null };
         },
     });
@@ -314,6 +314,14 @@ function shouldUsePiContextForGoalPoller(ctx, goal) {
     const currentSessionKey = resolveSessionKey(ctx);
     return goal.sessionKey === currentSessionKey || goal.originSessionKey === currentSessionKey;
 }
+async function getPiSessionGoalToolResult(runtime, ctx) {
+    const sessionKey = resolveSessionKey(ctx);
+    const direct = await runtime.toolGetGoal(sessionKey);
+    if (direct.goal)
+        return direct;
+    const owned = await findPiSessionGoalSummary(runtime, sessionKey);
+    return owned ? runtime.toolGetGoal(owned.sessionKey) : direct;
+}
 async function showPiGoalSessionStatus(runtime, ctx) {
     const sessionKey = resolveSessionKey(ctx);
     const current = (await runtime.getGoal(sessionKey)).goal;
@@ -321,9 +329,12 @@ async function showPiGoalSessionStatus(runtime, ctx) {
         showGoalStatus(ctx, current);
         return;
     }
-    const owned = (await runtime.listGoalSummaries()).find((goal) => goal.sessionKey === sessionKey || goal.originSessionKey === sessionKey);
+    const owned = await findPiSessionGoalSummary(runtime, sessionKey);
     if (owned)
         showGoalStatus(ctx, owned);
+}
+async function findPiSessionGoalSummary(runtime, sessionKey) {
+    return (await runtime.listGoalSummaries()).find((goal) => goal.sessionKey === sessionKey || goal.originSessionKey === sessionKey);
 }
 function safeNotify(ctx, message, type) {
     try {

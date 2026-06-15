@@ -814,8 +814,11 @@ test("Pi session start refreshes completed goal-owned session status", async () 
   }
 
   const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+  const tools: Array<{ name: string; execute: (...args: unknown[]) => Promise<{ content: Array<{ text: string }> }> }> = [];
   const pi = {
-    registerTool() {},
+    registerTool(tool: { name: string; execute: (...args: unknown[]) => Promise<{ content: Array<{ text: string }> }> }) {
+      tools.push(tool);
+    },
     registerCommand() {},
     on(event: string, handler: (...args: unknown[]) => unknown) {
       const list = handlers.get(event) ?? [];
@@ -857,6 +860,13 @@ test("Pi session start refreshes completed goal-owned session status", async () 
 
   try {
     goalPiExtension(pi as never);
+    const getGoalTool = tools.find((tool) => tool.name === "get_goal");
+    assert.ok(getGoalTool);
+    const otherToolResult = await getGoalTool.execute("call", {}, undefined, undefined, makeCtx("/other/session.jsonl", [], []) as never);
+    assert.equal(otherToolResult.content[0]?.text, "No current goal.");
+    const originToolResult = await getGoalTool.execute("call", {}, undefined, undefined, makeCtx(originFile, [], []) as never);
+    assert.match(originToolResult.content[0]?.text ?? "", /Status: complete/);
+
     for (const handler of handlers.get("session_start") ?? []) await handler({}, makeCtx("/other/session.jsonl", otherStatuses, otherWidgets) as never);
     assert.deepEqual(otherStatuses, []);
     assert.deepEqual(otherWidgets, []);

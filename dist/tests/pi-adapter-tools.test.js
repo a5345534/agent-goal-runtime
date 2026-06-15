@@ -828,8 +828,11 @@ test("Pi session start refreshes completed goal-owned session status", async () 
         await seedStore.close?.();
     }
     const handlers = new Map();
+    const tools = [];
     const pi = {
-        registerTool() { },
+        registerTool(tool) {
+            tools.push(tool);
+        },
         registerCommand() { },
         on(event, handler) {
             const list = handlers.get(event) ?? [];
@@ -872,6 +875,12 @@ test("Pi session start refreshes completed goal-owned session status", async () 
     const executionWidgets = [];
     try {
         goalPiExtension(pi);
+        const getGoalTool = tools.find((tool) => tool.name === "get_goal");
+        assert.ok(getGoalTool);
+        const otherToolResult = await getGoalTool.execute("call", {}, undefined, undefined, makeCtx("/other/session.jsonl", [], []));
+        assert.equal(otherToolResult.content[0]?.text, "No current goal.");
+        const originToolResult = await getGoalTool.execute("call", {}, undefined, undefined, makeCtx(originFile, [], []));
+        assert.match(originToolResult.content[0]?.text ?? "", /Status: complete/);
         for (const handler of handlers.get("session_start") ?? [])
             await handler({}, makeCtx("/other/session.jsonl", otherStatuses, otherWidgets));
         assert.deepEqual(otherStatuses, []);

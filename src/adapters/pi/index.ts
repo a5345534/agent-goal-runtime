@@ -34,6 +34,7 @@ import {
   type GoalRecord,
   type GoalSubagentRecord,
   type GoalSummary,
+  type GoalToolResult,
   type HiddenGoalTurnRequest,
 } from "../../core/index.js";
 import {
@@ -195,7 +196,7 @@ export default function goalPiExtension(pi: ExtensionAPI) {
     promptGuidelines: ["Use get_goal when you need to inspect the active /goal state before deciding whether to continue, complete, or block it."],
     async execute(_toolCallId: string, _params: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       lastCtx = rememberPiGoalSessionContext(sessionContexts, ctx);
-      const result = await runtime.toolGetGoal(resolveSessionKey(ctx));
+      const result = await getPiSessionGoalToolResult(runtime, ctx);
       return { content: [{ type: "text", text: result.message }], details: result.goal ?? null };
     },
   });
@@ -405,6 +406,14 @@ function shouldUsePiContextForGoalPoller(ctx: ExtensionContext | ExtensionComman
   return goal.sessionKey === currentSessionKey || goal.originSessionKey === currentSessionKey;
 }
 
+async function getPiSessionGoalToolResult(runtime: GoalRuntime, ctx: ExtensionContext | ExtensionCommandContext): Promise<GoalToolResult> {
+  const sessionKey = resolveSessionKey(ctx);
+  const direct = await runtime.toolGetGoal(sessionKey);
+  if (direct.goal) return direct;
+  const owned = await findPiSessionGoalSummary(runtime, sessionKey);
+  return owned ? runtime.toolGetGoal(owned.sessionKey) : direct;
+}
+
 async function showPiGoalSessionStatus(runtime: GoalRuntime, ctx: ExtensionContext | ExtensionCommandContext): Promise<void> {
   const sessionKey = resolveSessionKey(ctx);
   const current = (await runtime.getGoal(sessionKey)).goal;
@@ -413,8 +422,12 @@ async function showPiGoalSessionStatus(runtime: GoalRuntime, ctx: ExtensionConte
     return;
   }
 
-  const owned = (await runtime.listGoalSummaries()).find((goal) => goal.sessionKey === sessionKey || goal.originSessionKey === sessionKey);
+  const owned = await findPiSessionGoalSummary(runtime, sessionKey);
   if (owned) showGoalStatus(ctx, owned);
+}
+
+async function findPiSessionGoalSummary(runtime: GoalRuntime, sessionKey: string): Promise<GoalSummary | undefined> {
+  return (await runtime.listGoalSummaries()).find((goal) => goal.sessionKey === sessionKey || goal.originSessionKey === sessionKey);
 }
 
 function safeNotify(ctx: ExtensionContext | ExtensionCommandContext, message: string, type: "info" | "warning" | "error"): void {
